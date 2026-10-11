@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="Anvil, the agent builder. Describe a process. Get a tested agent." width="100%">
+  <img src="assets/banner-v2.svg" alt="Anvil, the agent builder. Describe a process. Get a tested agent." width="100%">
 </p>
 
 <p align="center">
@@ -198,7 +198,7 @@ flowchart LR
 ## System 1 and System 2
 
 <p align="center">
-  <img src="assets/s1s2.svg" alt="A typed question goes to Jev first. A confident answer is used. A low-confidence answer goes to the reasoning model." width="100%">
+  <img src="assets/s1s2-v2.svg" alt="A typed question goes to the fast decision model first. A confident answer is used. A low-confidence answer goes to the reasoning model." width="100%">
 </p>
 
 Anvil uses two kinds of model, like fast and slow thinking:
