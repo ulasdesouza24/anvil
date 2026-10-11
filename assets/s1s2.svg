@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="380" viewBox="0 0 1280 380" role="img" aria-labelledby="t d">
+  <title id="t">System 1 and System 2</title>
+  <desc id="d">A typed question goes to Jev first. A confident answer is used at once. An answer below the threshold goes to the reasoning model.</desc>
+  <defs>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" fill="none" stroke="#1b1e25"/></pattern>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#3a3f4d"/></marker>
+    <style>
+      .sans { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+      .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .a { animation: a 10s linear infinite; }
+      .b { opacity: 0; animation: b 10s linear infinite; }
+      @keyframes a { 0%,46% { opacity: 1; } 50%,96% { opacity: 0; } 100% { opacity: 1; } }
+      @keyframes b { 0%,46% { opacity: 0; } 50%,96% { opacity: 1; } 100% { opacity: 0; } }
+      .barA { animation: barA 10s ease-out infinite; }
+      @keyframes barA { 0% { width: 0; } 10%,46% { width: 166px; } 50%,100% { width: 0; } }
+      .barB { animation: barB 10s ease-out infinite; }
+      @keyframes barB { 0%,50% { width: 0; } 60%,96% { width: 74px; } 100% { width: 0; } }
+      .flow { stroke-dasharray: 5 7; animation: dash 1.2s linear infinite; }
+      @keyframes dash { to { stroke-dashoffset: -24; } }
+      .late { opacity: 0; animation: late 10s linear infinite; }
+      @keyframes late { 0%,62% { opacity: 0; } 66%,96% { opacity: 1; } 100% { opacity: 0; } }
+      .early { opacity: 0; animation: early 10s linear infinite; }
+      @keyframes early { 0%,12% { opacity: 0; } 16%,46% { opacity: 1; } 50%,100% { opacity: 0; } }
+      @media (prefers-reduced-motion: reduce) { .a, .b, .barA, .barB, .flow, .late, .early { animation: none; } .b, .late { opacity: 0; } .early { opacity: 1; } }
+    </style>
+  </defs>
+  <rect width="1280" height="380" rx="20" fill="#0b0c0e"/>
+  <rect width="1280" height="380" rx="20" fill="url(#grid)" opacity=".6"/>
+  <rect x=".5" y=".5" width="1279" height="379" rx="20" fill="none" stroke="#232731"/>
+
+  <text x="56" y="52" class="sans" font-size="22" font-weight="800" fill="#e8eaee">System 1 decides. System 2 thinks.</text>
+  <text x="56" y="76" class="sans" font-size="13" fill="#9097a4">A typed question goes to Jev first. Below the confidence threshold, the reasoning model gets the question.</text>
+
+  <!-- The question -->
+  <rect x="56" y="118" width="300" height="150" rx="14" fill="#111317" stroke="#2e3340"/>
+  <text x="76" y="146" class="mono" font-size="11" fill="#5d6472">decision node · typed question</text>
+  <g class="a sans" font-size="15" fill="#e8eaee">
+    <text x="76" y="180">Is this lead a fit</text>
+    <text x="76" y="202">for a developer tool?</text>
+    <text x="76" y="240" class="mono" font-size="12" fill="#9097a4">choice: yes | no</text>
+  </g>
+  <g class="b sans" font-size="15" fill="#e8eaee">
+    <text x="76" y="180">Does this clause limit</text>
+    <text x="76" y="202">the liability of the buyer?</text>
+    <text x="76" y="240" class="mono" font-size="12" fill="#9097a4">choice: yes | no | unclear</text>
+  </g>
+
+  <path d="M 358 193 L 440 193" stroke="#3a3f4d" stroke-width="1.6" marker-end="url(#arr)"/>
+  <path class="flow" d="M 358 193 L 436 193" stroke="#fbbf24" stroke-width="1.6" fill="none" opacity=".7"/>
+
+  <!-- System 1 -->
+  <rect x="444" y="118" width="300" height="150" rx="14" fill="#111317" stroke="#fbbf24" stroke-opacity=".7"/>
+  <circle cx="466" cy="142" r="5" fill="#fbbf24"/>
+  <text x="480" y="147" class="sans" font-size="15" font-weight="700" fill="#e8eaee">System 1 · Jev</text>
+  <text x="602" y="147" class="mono" font-size="11" fill="#fbbf24">about 0.3 s</text>
+  <text x="466" y="176" class="mono" font-size="11" fill="#9097a4">typed answer + calibrated probability</text>
+  <rect x="466" y="196" width="200" height="12" rx="6" fill="#1b1e25"/>
+  <rect class="barA" x="466" y="196" height="12" rx="6" fill="#34d399"/>
+  <rect class="barB" x="466" y="196" height="12" rx="6" fill="#f87171"/>
+  <line x1="586" y1="190" x2="586" y2="214" stroke="#e8eaee" stroke-dasharray="2 2"/>
+  <text x="560" y="230" class="mono" font-size="10" fill="#5d6472">threshold 0.6</text>
+  <text class="a mono" x="676" y="207" font-size="13" fill="#34d399">0.92</text>
+  <text class="b mono" x="676" y="207" font-size="13" fill="#f87171">0.41</text>
+  <text x="466" y="254" class="mono" font-size="11" fill="#5d6472">ANVIL_CONFIDENCE_THRESHOLD</text>
+
+  <!-- Confident: use the answer -->
+  <path class="early" d="M 746 160 C 800 160 800 130 852 130" stroke="#34d399" stroke-width="1.8" fill="none" marker-end="url(#arr)"/>
+  <g class="early">
+    <rect x="856" y="102" width="368" height="56" rx="12" fill="#0f2a20" stroke="#34d399" stroke-opacity=".6"/>
+    <text x="876" y="126" class="mono" font-size="13" fill="#34d399">answer: yes · p = 0.92</text>
+    <text x="876" y="146" class="sans" font-size="12" fill="#9097a4">Used at once. No reasoning call is made.</text>
+  </g>
+
+  <!-- Not confident: escalate -->
+  <g class="b"><path class="flow" d="M 746 230 C 800 230 800 250 852 250" stroke="#a78bfa" stroke-width="1.8" fill="none" marker-end="url(#arr)"/></g>
+  <g class="b">
+    <rect x="856" y="200" width="368" height="104" rx="12" fill="#161325" stroke="#a78bfa" stroke-opacity=".7"/>
+    <circle cx="878" cy="224" r="5" fill="#a78bfa"/>
+    <text x="892" y="229" class="sans" font-size="15" font-weight="700" fill="#e8eaee">System 2 · GLM</text>
+    <text x="876" y="254" class="sans" font-size="12" fill="#9097a4">The reasoning model reads the context and</text>
+    <text x="876" y="272" class="sans" font-size="12" fill="#9097a4">gives the answer with its reasons.</text>
+    <text class="late mono" x="876" y="294" font-size="13" fill="#a78bfa">answer: unclear · escalated</text>
+  </g>
+
+  <text x="56" y="330" class="sans" font-size="12" fill="#9097a4">Jev answers: build triage (8 questions in one call), the plan gate, model tiers for each AI step, decision nodes,</text>
+  <text x="56" y="350" class="sans" font-size="12" fill="#9097a4">refine critiques, the grade of each test criterion, failure blame, the intent guard of evolve, and the action gate.</text>
+</svg>

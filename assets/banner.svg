@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="440" viewBox="0 0 1280 440" role="img" aria-labelledby="t d">
+  <title id="t">Anvil, the agent builder</title>
+  <desc id="d">Describe a process in plain language. Anvil builds a typed workflow agent, tests it, improves it, and serves it as an API.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0c0e"/>
+      <stop offset="1" stop-color="#121418"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#f97316" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#f97316" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#a78bfa" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#a78bfa" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#1b1e25" stroke-width="1"/>
+    </pattern>
+    <linearGradient id="fade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0b0c0e" stop-opacity="1"/>
+      <stop offset="0.45" stop-color="#0b0c0e" stop-opacity="0.6"/>
+      <stop offset="1" stop-color="#0b0c0e" stop-opacity="0"/>
+    </linearGradient>
+    <style>
+      .sans { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+      .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .flow { stroke-dasharray: 6 10; animation: dash 1.4s linear infinite; }
+      @keyframes dash { to { stroke-dashoffset: -32; } }
+      .pulse { animation: pulse 3s ease-in-out infinite; transform-origin: 112px 120px; }
+      @keyframes pulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+      .spark { animation: rise 2.6s ease-out infinite; opacity: 0; }
+      .s2 { animation-delay: .7s; } .s3 { animation-delay: 1.3s; } .s4 { animation-delay: 1.9s; }
+      @keyframes rise { 0% { transform: translate(0,0); opacity: 0; } 10% { opacity: 1; } 100% { transform: translate(var(--dx),-70px); opacity: 0; } }
+      .ok { opacity: 0; animation: ok 6s ease-in-out infinite; }
+      .k1 { animation-delay: .4s; } .k2 { animation-delay: 1.2s; } .k3 { animation-delay: 2s; } .k4 { animation-delay: 2.2s; } .k5 { animation-delay: 3s; }
+      @keyframes ok { 0%,4% { opacity: 0; } 10%,80% { opacity: 1; } 90%,100% { opacity: 0; } }
+      .badge { opacity: 0; animation: ok 6s ease-in-out infinite; animation-delay: 3.6s; }
+      .token { offset-rotate: 0deg; opacity: 0; animation: move 6s ease-in-out infinite both; }
+      .tA { offset-path: path("M 806 220 C 850 220 860 150 904 150"); animation-delay: .8s; }
+      .tB { offset-path: path("M 806 220 C 850 220 860 290 904 290"); animation-delay: .8s; }
+      .tC { offset-path: path("M 1014 150 C 1056 150 1062 220 1104 220"); animation-delay: 2.4s; }
+      .tD { offset-path: path("M 1014 290 C 1056 290 1062 220 1104 220"); animation-delay: 2.4s; }
+      .tE { offset-path: path("M 666 220 L 696 220"); animation-delay: 0s; }
+      @keyframes move { 0% { offset-distance: 0%; opacity: 0; } 4% { opacity: 1; } 22% { offset-distance: 100%; opacity: 1; } 26%,100% { offset-distance: 100%; opacity: 0; } }
+      @media (prefers-reduced-motion: reduce) { .flow, .pulse, .spark, .token { animation: none; } .ok, .badge { animation: none; opacity: 1; } }
+    </style>
+  </defs>
+
+  <rect width="1280" height="440" rx="24" fill="url(#bg)"/>
+  <rect width="1280" height="440" rx="24" fill="url(#grid)" opacity="0.7"/>
+  <rect width="1280" height="440" rx="24" fill="url(#fade)"/>
+  <circle cx="960" cy="220" r="300" fill="url(#glow2)"/>
+  <rect x="0.5" y="0.5" width="1279" height="439" rx="24" fill="none" stroke="#232731"/>
+
+  <!-- Logo: the tile and the hammer of the UI -->
+  <circle class="pulse" cx="112" cy="120" r="90" fill="url(#glow)"/>
+  <g transform="translate(72 80)">
+    <rect width="80" height="80" rx="20" fill="#f97316"/>
+    <g transform="translate(16 16) scale(2)" fill="none" stroke="#1a0a00" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m15 12-9.373 9.373a1 1 0 0 1-3.001-3L12 9"/>
+      <path d="m18 15 4-4"/>
+      <path d="m21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172v-.344a2 2 0 0 0-.586-1.414l-1.657-1.657A6 6 0 0 0 12.516 3H9l1.243 1.243A6 6 0 0 1 12 8.485V10l2 2h1.172a2 2 0 0 1 1.414.586L18.5 14.5"/>
+    </g>
+  </g>
+  <g fill="#fb923c">
+    <circle class="spark" style="--dx:-14px" cx="104" cy="82" r="2.2"/>
+    <circle class="spark s2" style="--dx:10px" cx="124" cy="80" r="1.8"/>
+    <circle class="spark s3" style="--dx:-4px" cx="114" cy="82" r="1.6"/>
+    <circle class="spark s4" style="--dx:18px" cx="134" cy="84" r="2"/>
+  </g>
+
+  <text x="176" y="118" class="sans" font-size="54" font-weight="800" fill="#e8eaee" letter-spacing="-1.5">Anvil</text>
+  <text x="178" y="150" class="sans" font-size="18" fill="#9097a4">the agent builder</text>
+
+  <text x="72" y="236" class="sans" font-size="38" font-weight="800" fill="#e8eaee" letter-spacing="-1">Describe a process.</text>
+  <text x="72" y="282" class="sans" font-size="38" font-weight="800" fill="#f97316" letter-spacing="-1">Get a tested agent.</text>
+  <text x="72" y="322" class="sans" font-size="17" fill="#9097a4">Plain language in. A typed JSON workflow out: compiled, tested,</text>
+  <text x="72" y="346" class="sans" font-size="17" fill="#9097a4">improved by its own critic, and served as an API and an MCP tool.</text>
+
+  <g class="mono" font-size="13">
+    <rect x="72" y="374" width="150" height="30" rx="15" fill="#161920" stroke="#2e3340"/>
+    <circle cx="90" cy="389" r="4" fill="#fbbf24"/><text x="102" y="393" fill="#e8eaee">System 1 · Jev</text>
+    <rect x="232" y="374" width="150" height="30" rx="15" fill="#161920" stroke="#2e3340"/>
+    <circle cx="250" cy="389" r="4" fill="#a78bfa"/><text x="262" y="393" fill="#e8eaee">System 2 · GLM</text>
+    <rect x="392" y="374" width="138" height="30" rx="15" fill="#161920" stroke="#2e3340"/>
+    <circle cx="410" cy="389" r="4" fill="#34d399"/><text x="422" y="393" fill="#e8eaee">MCP, 2 ways</text>
+    <rect x="540" y="374" width="128" height="30" rx="15" fill="#161920" stroke="#2e3340"/>
+    <circle cx="558" cy="389" r="4" fill="#f97316"/><text x="570" y="393" fill="#e8eaee">Apache-2.0</text>
+  </g>
+
+  <!-- A built agent: the request goes in, the graph runs, the tests pass -->
+  <g class="mono" font-size="12">
+    <rect x="566" y="196" width="100" height="48" rx="10" fill="#111317" stroke="#2e3340"/>
+    <text x="580" y="217" fill="#e8eaee">request</text>
+    <text x="580" y="233" fill="#5d6472">plain text</text>
+
+    <g fill="none" stroke="#3a3f4d" stroke-width="2">
+      <path d="M 666 220 L 696 220"/>
+      <path d="M 806 220 C 850 220 860 150 904 150"/>
+      <path d="M 806 220 C 850 220 860 290 904 290"/>
+      <path d="M 1014 150 C 1056 150 1062 220 1104 220"/>
+      <path d="M 1014 290 C 1056 290 1062 220 1104 220"/>
+    </g>
+    <g fill="none" stroke="#f97316" stroke-width="2" opacity="0.8">
+      <path class="flow" d="M 666 220 L 696 220"/>
+      <path class="flow" d="M 806 220 C 850 220 860 150 904 150"/>
+      <path class="flow" d="M 806 220 C 850 220 860 290 904 290"/>
+      <path class="flow" d="M 1014 150 C 1056 150 1062 220 1104 220"/>
+      <path class="flow" d="M 1014 290 C 1056 290 1062 220 1104 220"/>
+    </g>
+
+    <g>
+      <rect x="696" y="196" width="110" height="48" rx="10" fill="#111317" stroke="#fbbf24" stroke-opacity="0.7"/>
+      <text x="710" y="217" fill="#e8eaee">decision</text>
+      <text x="710" y="233" fill="#fbbf24">S1 · 0.3 s</text>
+      <circle class="ok k1" cx="794" cy="208" r="5" fill="#34d399"/>
+    </g>
+    <g>
+      <rect x="904" y="126" width="110" height="48" rx="10" fill="#111317" stroke="#a78bfa" stroke-opacity="0.7"/>
+      <text x="918" y="147" fill="#e8eaee">extract</text>
+      <text x="918" y="163" fill="#a78bfa" font-size="11">S2 · schema</text>
+      <circle class="ok k2" cx="1002" cy="138" r="5" fill="#34d399"/>
+    </g>
+    <g>
+      <rect x="904" y="266" width="110" height="48" rx="10" fill="#111317" stroke="#a78bfa" stroke-opacity="0.7"/>
+      <text x="918" y="287" fill="#e8eaee">agent</text>
+      <text x="918" y="303" fill="#a78bfa">S2 · tools</text>
+      <circle class="ok k3" cx="1002" cy="278" r="5" fill="#34d399"/>
+    </g>
+    <g>
+      <rect x="1104" y="196" width="110" height="48" rx="10" fill="#111317" stroke="#f97316" stroke-opacity="0.8"/>
+      <text x="1118" y="217" fill="#e8eaee">output</text>
+      <text x="1118" y="233" fill="#fb923c">POST /run</text>
+      <circle class="ok k5" cx="1202" cy="208" r="5" fill="#34d399"/>
+    </g>
+
+    <g fill="#fb923c">
+      <circle class="token tE" r="4"/>
+      <circle class="token tA" r="4"/>
+      <circle class="token tB" r="4"/>
+      <circle class="token tC" r="4"/>
+      <circle class="token tD" r="4"/>
+    </g>
+
+    <g class="badge">
+      <rect x="1036" y="344" width="178" height="34" rx="17" fill="#0f2a20" stroke="#34d399" stroke-opacity="0.6"/>
+      <text x="1054" y="366" fill="#34d399">✓ tests pass · 97</text>
+    </g>
+    <text x="904" y="96" fill="#5d6472">compiled · versioned · traced</text>
+  </g>
+</svg>

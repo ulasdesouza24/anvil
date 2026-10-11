@@ -1,146 +1,72 @@
-# ⚒ Anvil
+<p align="center">
+  <img src="assets/banner.svg" alt="Anvil, the agent builder. Describe a process. Get a tested agent." width="100%">
+</p>
 
-**Describe a process in plain language. Anvil designs, compiles, tests and evolves an agent for it, then serves it as an API.**
+<p align="center">
+  <b>Built by Ulaş Taylan Met</b><br><br>
+  <a href="https://www.linkedin.com/in/ulastaylano"><img src="https://img.shields.io/badge/LinkedIn-ulastaylano-0a66c2?style=for-the-badge&logo=linkedin&logoColor=white" alt="LinkedIn: ulastaylano"></a>
+  <a href="https://x.com/ulasdesouza24"><img src="https://img.shields.io/badge/X-%40ulasdesouza24-000000?style=for-the-badge&logo=x&logoColor=white" alt="X: @ulasdesouza24"></a>
+  <a href="https://github.com/ulasdesouza24"><img src="https://img.shields.io/badge/GitHub-ulasdesouza24-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub: ulasdesouza24"></a>
+</p>
 
-Anvil is an agentic system that builds agents. Agents are typed JSON workflows composed from a library of node classes, which makes them n8n-like but authored by AI. The meta-agent that builds them is **itself a Anvil agent**, written in the same JSON IR and executed by the same engine.
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-f97316?style=flat-square" alt="License: Apache-2.0"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D22-3c873a?style=flat-square&logo=node.js&logoColor=white" alt="Node 22 or later">
+  <img src="https://img.shields.io/badge/TypeScript-strict-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript">
+  <img src="https://img.shields.io/badge/tests-424%20passing-34d399?style=flat-square" alt="424 tests pass">
+  <img src="https://img.shields.io/badge/MCP-server%20%2B%20client-a78bfa?style=flat-square" alt="MCP server and client">
+</p>
 
+**Anvil is an agent that builds agents.** You describe a process in plain language. Anvil designs an agent for it, compiles it, writes tests for it, runs the tests, fixes the agent until the tests pass, and serves the agent as an API endpoint and an MCP tool.
+
+An Anvil agent is not a long prompt. It is a typed JSON workflow of **node classes**, like an n8n workflow that an AI writes. A compiler checks each workflow before it runs. The builder itself is an Anvil agent, in the same JSON format, on the same engine.
+
+```text
+"Score inbound leads 0-100, draft a reply to hot leads, and tag cold leads for nurture."
+                                         │
+                                         ▼
+   a 10-node agent · 3 synthesized tests · score 94 · POST /api/agents/lead-scorer-router/run
 ```
-"Triage support emails, draft replies grounded in our help center, escalate angry customers"
-      │
-      ▼  anvil-builder  (a JSON workflow of anvil_* node classes)
- ┌──────────┐  ┌─────────┐  ┌───────────┐  ┌──────────────────┐  ┌──────────┐  ┌──────────────┐  ┌─────────┐
- │ Triage   │→ │ Analyze │→ │ Architect │→ │ Compose+Compile  │→ │ Testgen  │→ │ Eval⟳Evolve  │→ │ Publish │
- │ System 1 │  │ task    │  │ plan +    │  │ JSON → validate  │  │ suite w/ │  │ Jev-graded,  │  │ API +   │
- │ fan-out  │  │ spec    │  │ S1 tiers  │  │ → JSON-Patch fix │  │ criteria │  │ critic patch │  │ version │
- └──────────┘  └─────────┘  └───────────┘  └──────────────────┘  └──────────┘  └──────────────┘  └─────────┘
-      ▲ (optional) human_input: clarifying questions via router → re-analyze
-```
 
-## Why it's different
+<p align="center">
+  <img src="assets/ui-build.png" alt="The Build page of the Anvil UI" width="100%">
+</p>
 
-| | n8n / Zapier style | "prompt → agent" toys | **Anvil** |
-|---|---|---|---|
-| Who authors the workflow | a human, by dragging | an LLM, as free text | an LLM, as a **typed IR** checked against a class registry |
-| Correctness before running | none | none | **static compiler**: schema, ports, DAG, data refs, field types, and even JS inside code nodes |
-| Does it work? | you find out in prod | you find out in prod | **synthesized test suite**, graded per criterion with calibrated probabilities |
-| Improvement | manual | manual | **evolve loop**: critic reads per-node traces → JSON Patch → recompile → re-test → keep the best |
-| Decisions | if/else on strings | "ask the LLM" | **System 1** (Jev: fast, typed, calibrated) + **System 2** (GLM: reasoning), with confidence-gated escalation |
-| Meta level | – | – | the builder is itself a workflow of the same classes (**the builder builds itself**) |
+## Contents
 
-## Core ideas
-
-### 1. Node classes: the "class library"
-Every building block is a class with a Zod config schema, output schema (static, may depend on config), ports, side-effect flag, retry policy, and builder-facing guidance (`description`, `whenToUse`, `example`). The registry serializes itself into a manifest. That manifest is what the builder reads, so **adding a class automatically teaches the builder a new skill.**
-
-20 public classes across 7 categories:
-
-- **io**: `input`, `output`
-- **ai (System 2)**: `llm`, `llm_structured` (JSON-schema-validated, self-repairing), `agent` (ReAct tool loop with native tool calls), `refine` (draft → Jev critique → revise)
-- **decision (System 1)**: `decision` (Jev choice/score/noul, many questions per ~0.3s call, optional routing by answer, `uncertain` port, System-2 escalation)
-- **flow**: `router` (deterministic rules), `merge`, `map` (parallel fan-out over lists via llm / llm_structured / sub-agent / code), `subagent` (composition)
-- **data**: `transform` (pure templates), `code` (sandboxed JS), `knowledge_search` (BM25 RAG), `memory` (persistent KV across runs)
-- **tools**: `http`, `web_fetch` (HTML → readable text), `web_search` (provider chain: OpenRouter/Exa → Wikipedia → DuckDuckGo)
-- **human**: `human_approval` (approve / reject / edit), `human_input` (questions)
-
-The `agent` node has 10 tools: `web_search`, `fetch_url`, `http_request`, `calculator` (safe parser, no eval), `current_time`, `run_js`, `memory_get/set`, `call_agent` (delegate to another saved agent), `search_documents`.
-
-There are also 9 internal `anvil_*` meta-classes (triage, analyze, architect, compose, testgen, evolve, publish, load, edit). The meta-agents are made from them.
-
-### 2. The Agent IR (`anvil/v1`)
-An agent is a versioned JSON document: `inputSchema`, `nodes[]`, `edges[]` (with ports for branching), `policy` (cost budget, max executions, timeout, approval requirement for side effects), `tests[]`, `meta`.
-
-Data flows through a safe, eval-free **template language**:
-```
-{{input.question}}   {{nodes.search.output.results[0].url}}
-{{nodes.a.output.text ?? nodes.b.output.text ?? "n/a"}}
-{{nodes.extract.output.items | length}}   {{nodes.x.output | json}}   {{item.name | upper}}
-```
-A string that is exactly one expression keeps its raw type (arrays and objects pass through).
-
-### 3. The engine
-Executes the DAG with **dataflow semantics and dead-path elimination**:
-- A node is ready when all incoming edges are resolved. It runs if at least one is active; otherwise it is skipped and propagates the skip. Branches re-join naturally, with no special "join" configuration.
-- Branching nodes fire named ports. Every node also has an implicit `error` port, so failures can be routed to fallback branches.
-- Independent nodes run in parallel (bounded). Per-node retry with backoff, per-node timeout, run-level **cost budget**, execution cap, and timeout.
-- Human steps pause the run. It resumes over the API or UI. Human steps inside sub-agents surface on the parent run.
-- Input is validated and coerced against `inputSchema`, with defaults applied.
-- Every step emits a typed event (`node.*`, `llm`, `decision`, `artifact`, `run.*`) that is streamed over SSE and persisted as a trace.
-
-### 4. The compiler loop
-Model output → **deterministic auto-fix** (unwrap, `source/target` → `from/to`, snake_case ids with reference rewriting, config hoisting, dedup) → **static validation** → **targeted JSON-Patch repair** by the model, falling back to a full rewrite, repeated until zero errors. The loop keeps the best candidate it has seen.
-
-The validator reports actionable diagnostics with JSON pointers and hints:
-`UNKNOWN_NODE_TYPE` (did you mean…), `INVALID_CONFIG`, `UNKNOWN_CONFIG_KEY`, `EDGE_UNKNOWN_PORT` (valid ports: …), `CYCLE`, `UNREACHABLE_NODE`, `DEAD_END`, `UNCONNECTED_PORT`, `TEMPLATE_NOT_UPSTREAM`, `TEMPLATE_UNKNOWN_FIELD` (available fields: … — checked against each class's output schema), `TEMPLATE_UNKNOWN_INPUT`, `TEMPLATE_BAD_SCOPE`, `CODE_UNKNOWN_NODE` / `CODE_NOT_UPSTREAM` / `CODE_BAD_PATH` (references inside JavaScript), `UNGATED_SIDE_EFFECT`, `TEST_INPUT_INVALID`, …
-
-### 5. System 1 + System 2
-- **System 2**: `z-ai/glm-5.3-flash` via OpenRouter, in three tiers (`fast`, `balanced`, `deep`) that map to reasoning effort and token budget. All of this is configurable.
-- **System 1**: `typesafe/jev-1.13` via OpenRouter's Decisions API. It returns typed answers with calibrated probabilities in about 0.3s, at $0.04 per million input tokens.
-
-Where Jev is used: build triage (8 questions in one call); the plan quality gate; **model-tier routing for every AI step**; runtime `model: "auto"`; `decision` nodes; `refine` critiques; **grading every test criterion**; sanity-checking unfair test criteria during evolution.
-
-When Jev's confidence falls below the threshold, the question is escalated to GLM (confidence-gated routing).
-
-### 6. Evaluate ⟳ Evolve
-Each build synthesizes a test suite: typical, edge, and adversarial cases, each with natural-language criteria plus deterministic checks. Every test runs as a recorded eval run (human steps auto-approved) and Jev grades each criterion.
-
-When the pass rate is below target:
-1. Jev flags criteria that are unfair for the task and drops them.
-2. A critic LLM reads the failing outputs **and per-node traces**, diagnoses the root cause, and emits a JSON Patch.
-3. The patch is recompiled and re-evaluated. The candidate replaces the current best only if it scores higher (hill climbing).
-
-Every version keeps its evaluation report.
-
-Guard rails that keep evolution honest:
-- **Evaluation semantics are explicit.** During tests, human approvals are auto-approved and questions are skipped. The test synthesizer, the critic, and Jev's fairness check all know this.
-- **Safety invariant.** A candidate that removes a `human_approval` gate is rejected deterministically, whatever its score.
-- **Lenient patching.** JSON Patch operations are applied one at a time. Harmless slips (removing a path that doesn't exist, replacing a missing key) are tolerated, and the compiler checks the result.
-- **Never lose a working agent.** A failed round keeps the best version so far. If evaluation crashes entirely, the builder's `error` port still publishes the compiled agent.
-
-### 7. The library extends itself: custom classes
-When a task needs a capability the library lacks (a specific service's API, a reusable specialized skill), the architect declares it in `newClasses`. The `anvil_classgen` stage then:
-1. writes a JSON-defined class of kind `http` (a parameterized API call plus optional JS shaping), `code` (sandboxed JS), or `llm` (a schema-typed prompt skill)
-2. validates it statically: only declared config fields and secrets are allowed in templates, no literal credentials, and non-GET requests must be marked as side effects
-3. **executes its tests for real** and repairs it from the actual failure report
-4. registers it live, so the composer and every future agent can use it. `map` with `mode: "node"` runs any class per item.
-
-Secrets come from `.env` as `{{secrets.NAME}}` and are redacted from all traces. A model-written class with side effects is blocked until a person approves it in the Node Library. Classes live in `data/classes/*.json` with version history. The `anvil-classsmith` meta-agent creates a class from a single sentence, and the UI can also generate, hand-write, approve, re-test, and delete classes.
-
-In the live runs, a currency class (frankfurter.app) came out correct on the first attempt in 5 seconds for $0.0005. For a weather agent, the builder generated Open-Meteo geocoding and forecast classes (the geocoder was repaired after a real test failure). A later price-localizer build **reused** the currency class, which is the library compounding.
-
-### 8. Autonomy: triggers
-Agents run on their own. Triggers are a versioned part of the spec, and every firing is an ordinary traced run (`kind: "trigger"`). There are four types:
-- **schedule**: timezone-aware 5-field cron (`0 9 * * 1-5`, `@daily`, names, steps) or an interval (`every: "15m"`)
-- **webhook**: `POST /api/hooks/:agentId/:triggerId` with an HMAC signature of the raw body or a per-trigger secret header, a replay window, a delivery-id dedupe, and a body limit, optionally answering synchronously with the agent output (see [docs/TRIGGERS.md](docs/TRIGGERS.md))
-- **poll**: RSS/Atom, JSON lists, or page changes. Items are deduplicated and processed **one at a time, oldest first**, and an item only counts as seen once its run has actually started, so nothing is lost when a run is busy.
-- **agent**: run after another agent completes or fails, with a chain-depth limit that stops loops
-
-An event that comes while the run of its trigger is active waits in a queue on disk and starts when the run ends. A run that waits for a person continues after a restart (see [docs/RECOVERY.md](docs/RECOVERY.md)), and an action with a side effect runs one time for each run (see [docs/EFFECTS.md](docs/EFFECTS.md)).
-
-Input mapping uses the event roots (`{{payload.*}}`, `{{item.*}}`, `{{output.*}}`, `{{trigger.firedAt}}`), and the compiler checks it: roots, cron, timezone, self-chains, and required inputs that aren't mapped. The builder extracts timing from the request ("every weekday at 9", "for each new post on …") and composes the trigger. **Triggers written by the builder start disabled** until a person enables them. The UI has an Automations page and a Triggers tab on each agent (enable/disable, fire now, webhook URL and token with rotation).
-
-### 9. The MCP bridge (both directions)
-- **Consume:** connect any MCP server, over Streamable HTTP or stdio, from the Connections page. Every tool becomes a custom class `x_mcp_<server>_<tool>`. Its config schema is the tool's input schema, and a tool that declares an output schema gets typed fields the compiler can check. Tools annotated `readOnlyHint` are usable immediately; everything else is locked until approved, either per tool or all at once for a server. Credentials are written as `${ENV_VAR}` references and resolved from `.env`.
-- **Expose:** Anvil is itself an MCP server at `http://127.0.0.1:8787/mcp` (Streamable HTTP, with an optional `ANVIL_MCP_TOKEN`) and over stdio (`npm run mcp`, which proxies a running server when there is one). Every agent is a tool, alongside **`anvil_build`**, `anvil_refine`, `anvil_run_agent`, and `anvil_list_agents`, so Claude Code, Claude Desktop, or Cursor can run agents and **build new ones** without leaving the conversation:
-  ```bash
-  claude mcp add --transport http anvil http://127.0.0.1:8787/mcp
-  ```
-
-### 10. The agent library: classes, examples, and lessons
-Each agent has a class with four axes: domain, pattern, source kind, and output kind. A new build finds the class of its task, and takes the best tested agents of the same class as **examples**: their graph, their library classes, and their tested sources. This is not inheritance. The new agent gets its own steps, so a change in an example never changes it. Each domain also keeps **lessons** from its builds: the sources that worked or did not, the agent errors that evolve fixed, and the test items that were wrong. The next build of the domain sees them. The Classes page shows the classes and the lessons. See [docs/LIBRARY.md](docs/LIBRARY.md).
-
-### 11. Live data sources
-Every call to a live source goes through one function: it tries a transient failure again with a backoff, respects a short Retry-After, reports a long one as a rate limit, names a timeout, sends configured tokens only to their host, and caches GET answers in evaluation runs. The source plan prefers fast sources and proposes new candidates when all candidates fail. See [docs/LIVE_DATA.md](docs/LIVE_DATA.md).
-
-### 12. Meta-agents: the builder is an agent
-`anvil-builder`, `anvil-refiner` (natural-language change → patch → recompile → retest → new version), `anvil-evaluator`, `anvil-evolver`, and `anvil-classsmith` are all ordinary Anvil specs (`src/builder/systemAgents.ts`). The builder's clarification step is a `router` → `human_input` → re-`analyze` branch that re-joins through `??` fallbacks, which is the same machinery user agents get.
+1. [Quickstart](#quickstart)
+2. [How a build works](#how-a-build-works)
+3. [What an agent is made of](#what-an-agent-is-made-of)
+4. [The compiler](#the-compiler)
+5. [System 1 and System 2](#system-1-and-system-2)
+6. [Tests, evaluation, and evolution](#tests-evaluation-and-evolution)
+7. [The runtime harness](#the-runtime-harness)
+8. [Conversation agents and safe actions](#conversation-agents-and-safe-actions)
+9. [Closed builds: given tools, tests, and rules](#closed-builds-given-tools-tests-and-rules)
+10. [Data: files, live sources, and a library that grows](#data-files-live-sources-and-a-library-that-grows)
+11. [The Python sandbox](#the-python-sandbox)
+12. [Autonomy: triggers, health checks, and feedback](#autonomy-triggers-health-checks-and-feedback)
+13. [MCP in both directions](#mcp-in-both-directions)
+14. [Use Anvil: UI, CLI, HTTP API, Docker](#use-anvil-ui-cli-http-api-docker)
+15. [Configuration](#configuration)
+16. [Project layout](#project-layout)
+17. [FAQ](#faq)
+18. [License](#license)
 
 ## Quickstart
 
+You need Node.js 22 or later and an [OpenRouter](https://openrouter.ai) API key.
+
 ```bash
+git clone https://github.com/ulasdesouza24/anvil.git && cd anvil
 npm install
-cp .env.example .env        # put your OPENROUTER_API_KEY in .env
+cp .env.example .env        # write your OPENROUTER_API_KEY in .env
 npm run dev                 # API on :8787, UI on http://127.0.0.1:5173
 ```
+
+Open http://127.0.0.1:5173, write what the agent must do, and click **Anvil agent**. The build page shows each stage live. When the build ends, the agent has a graph, a test report, a version history, and its own API endpoint.
+
+Start with a bundled agent if you want to see a result before you build. `data/agents/` has 11 agents that Anvil built from start to end, each with its tests and its evaluation report.
 
 ### API keys
 
@@ -148,100 +74,458 @@ Anvil reads its keys from `.env`. Copy `.env.example` to `.env` and fill in the 
 
 | Variable | Needed | What it is for |
 |---|---|---|
-| `OPENROUTER_API_KEY` | Yes | All model calls: the builder, the agents, and web search. Get a key at openrouter.ai. |
-| `ANVIL_API_TOKEN` | No | Protects the HTTP API and MCP endpoint. Set it when the server is not only on 127.0.0.1. |
+| `OPENROUTER_API_KEY` | Yes | All model calls: the builder, the agents, and web search. |
+| `ANVIL_API_TOKEN` | No | Protects the HTTP API and the MCP endpoint. Set it when the server is not only on 127.0.0.1. |
 | `ANVIL_SECRETS_KEY` | No | Encrypts the secrets that a person enters on the Connections page. Make one with `openssl rand -hex 32`. |
-| `SLACK_WEBHOOK_URL`, `SMTP_*` | No | Used only by agents that send results to Slack or by email. |
-| `GITHUB_TOKEN` and other source tokens | No | Used only by agents that call these services. See docs/LIVE_DATA.md. |
+| `SLACK_WEBHOOK_URL`, `SMTP_*` | No | Only for agents that send results to Slack or by email. |
+| `GITHUB_TOKEN` and other source tokens | No | Only for agents that call these services. See [docs/LIVE_DATA.md](docs/LIVE_DATA.md). |
 
-Production-style (single port):
-```bash
-npm run build && npm start  # UI + API on http://127.0.0.1:8787
+## How a build works
+
+<p align="center">
+  <img src="assets/pipeline.svg" alt="The 13 stages of a build, from the request to the published agent" width="100%">
+</p>
+
+The builder is the `anvil-builder` agent ([src/builder/systemAgents.ts](src/builder/systemAgents.ts)). It has 20 nodes. A build has a budget of $3 and 30 minutes by default.
+
+| # | Stage | What it does | Model |
+|---|---|---|---|
+| 1 | **Request** | Takes the request text, attached files, given tools, and given tests. | none |
+| 2 | **Tools** | Reads given tool definitions (OpenAPI 3, OpenAI or Anthropic function specs) and saves each tool as a class. A build with given tools is **closed**: the agent uses only these tools. | none |
+| 3 | **Triage** | Jev answers 8 questions in one call: clarity, pattern, complexity, and the flags for web, side effects, memory, lists, and quality. A cost model gives a low and high USD estimate. | S1 |
+| 4 | **Cost gate** | Over the limit: the build stops. Above the confirm level (default $0.50): a person approves or rejects. | person |
+| 5 | **Analyze** | Writes the task spec: inputs, outputs, steps, success criteria, data needs, file roles, rules, interaction kind, and trigger. When the request is not clear, the builder asks questions and analyzes again. | S2 |
+| 6 | **Library** | Classifies the task on 4 axes (domain, pattern, source kind, output kind). Finds tested agents of the same class as examples, and the lessons of the domain. | S1 |
+| 7 | **Sources** | For each data need, collects candidate sources, probes them for real (HTTP and a Playwright browser), and scores relevance, field coverage, and freshness. A good API becomes a tested source class. | S1 + S2 |
+| 8 | **Architect** | Plans the steps with node classes from the registry. Jev checks if the plan is complete and minimal, and sets a model tier (fast, balanced, deep) for each AI step. | S2 + S1 |
+| 9 | **Classgen** | Writes each class that the library does not have yet, runs its tests for real, and repairs it from the failure report. | S2 |
+| 10 | **Compose** | Writes the JSON spec and runs the [compiler loop](#the-compiler). Also writes the definition of done (`acceptance` rules). Triggers that the builder writes start disabled. | S2 + compiler |
+| 11 | **Testgen** | Writes typical, edge, and adversarial tests, plus one test for each important rule that tries to break the rule. Given tests come first. | S2 |
+| 12 | **Evolve** | Runs the tests, grades each criterion, and improves the agent with a critic. See [Tests, evaluation, and evolution](#tests-evaluation-and-evolution). | S1 + S2 |
+| 13 | **Publish** | Saves a new version. The agent gets an API endpoint and an MCP tool at once. When the evaluation crashes, the builder still publishes the compiled agent. | none |
+
+Anvil has 6 meta-agents. All are ordinary Anvil specs that you can open in the UI:
+
+| Meta-agent | Graph | What it does |
+|---|---|---|
+| `anvil-builder` | the 20 nodes above | Builds a new agent from a request. |
+| `anvil-refiner` | load → edit → evolve → publish | Changes an agent from a sentence ("Also return a Turkish translation"), tests it, and saves a new version. |
+| `anvil-evaluator` | load → evolve (no changes) → publish | Runs the tests again and attaches the report. |
+| `anvil-evolver` | load → evolve (1-6 rounds) → publish | Improves an existing agent. It can save the result as a draft version. |
+| `anvil-classsmith` | input → classgen → output | Makes one new class from a sentence. |
+| `anvil-best-of` | input → best_of → output | Builds N candidates with different builder models and keeps the best one. |
+
+## What an agent is made of
+
+An agent is a versioned JSON document in the `anvil/v1` format:
+
+```jsonc
+{
+  "specVersion": "anvil/v1",
+  "inputSchema": { /* JSON Schema of the input */ },
+  "nodes":  [ { "id": "assess", "type": "llm_structured", "config": { /* ... */ } } ],
+  "edges":  [ { "from": "route", "to": "draft_reply", "port": "hot" } ],
+  "policy": { "maxCostUsd": 0.2, "maxNodeExecutions": 100, "timeoutMs": 120000 },
+  "acceptance": [ /* the definition of done */ ],
+  "tests":  [ /* inputs, criteria, and checks */ ],
+  "meta":   { /* the request, the task spec, the plan, the class of the task */ }
+}
 ```
 
-With Docker (Anvil, the Python sandbox, and Chromium in containers):
-```bash
-cp .env.example .env              # put OPENROUTER_API_KEY in .env (and ANVIL_API_TOKEN to protect the API)
-docker compose up --build         # UI + API on http://127.0.0.1:8787
+<p align="center">
+  <img src="assets/ui-graph.png" alt="The graph of a built agent: input, transform, llm_structured, code, router with three branches, and output" width="100%">
+</p>
+
+### Node classes
+
+Each node is an instance of a **class**. A class declares a config schema, an output schema, ports, a side-effect flag, a retry policy, and guidance for the builder (`description`, `whenToUse`, `example`). The registry writes all classes into a manifest, and the builder reads this manifest. **When you add a class, the builder can use it at once.**
+
+27 public classes in 7 categories:
+
+| Category | Classes |
+|---|---|
+| io | `input`, `output` |
+| ai (System 2) | `llm`, `llm_structured` (output checked against a JSON Schema, with self-repair), `agent` (a tool loop with native tool calls), `refine` (draft, critique, revise), `code_agent` (writes and runs a Python program in the sandbox) |
+| decision (System 1) | `decision` (typed questions with probabilities, routing by answer, an `uncertain` port), `action_gate` (ports `pass` and `block`) |
+| logic | `router` (rules), `merge`, `map` (a parallel step for each item of a list), `subagent` (call another agent) |
+| data | `transform` (templates, no code), `code` (JavaScript on `node:vm`), `knowledge_search` (BM25), `memory` (key-value memory across runs), `file` |
+| tool | `http`, `web_fetch`, `web_search`, `browser` (Playwright, with network capture), `send_slack`, `send_email`, `send_webhook` |
+| human | `human_approval` (approve, reject, or edit), `human_input` (questions) |
+
+The `agent` node has 12 tools: `web_search`, `fetch_url`, `browse`, `http_request`, `run_code`, `calculator` (a parser, no `eval`), `current_time`, `run_js`, `memory_get`, `memory_set`, `call_agent`, and `search_documents`. A `recall` tool reads parts of the context that compaction removed.
+
+The builder uses 14 more classes of its own: `anvil_tools`, `anvil_triage`, `anvil_analyze`, `anvil_library`, `anvil_sources`, `anvil_architect`, `anvil_classgen`, `anvil_compose`, `anvil_testgen`, `anvil_evolve`, `anvil_publish`, `anvil_load`, `anvil_edit`, and `anvil_best_of`.
+
+### Templates
+
+Data moves between nodes with a template language that has no `eval`:
+
+```text
+{{input.question}}   {{nodes.search.output.results[0].url}}
+{{nodes.a.output.text ?? nodes.b.output.text ?? "n/a"}}
+{{nodes.extract.output.items | length}}   {{nodes.x.output | json}}   {{item.name | upper}}
 ```
-The compose file mounts the Docker socket: the Python sandbox starts its containers on the Docker of the host. The ports listen only on 127.0.0.1.
 
-Build tasks from files, without a person (no questions, no approvals). A task file is JSON: `{"id": "...", "request": "...", "files": ["sample.csv"], "maxBuildUsd": 1}` (see `tasks/example-meeting-notes.json`). File paths are relative to the task file.
-```bash
-npm run anvil -- build --task tasks/example-meeting-notes.json --out out/meeting-notes.agent.json
-npm run anvil -- build --tasks tasks/ --out out/ --concurrency 2      # each *.json of the folder; out/summary.json has the results
-npm run anvil -- run --spec out/meeting-notes.agent.json --input input.json
-docker compose run --rm --service-ports anvil npx tsx src/cli.ts build --tasks /tasks --out /tasks/out   # the same in Docker (stop the server first: it uses the same ports)
+A string that is exactly one expression keeps its type. Arrays and objects pass through as they are.
+
+### The engine
+
+- A node is ready when all its incoming edges are resolved. It runs when at least one edge is active. Otherwise the engine skips it and passes the skip on. Branches join again with no special join node.
+- Branch nodes fire named ports. Each node also has an `error` port, so a failure can go to a fallback branch.
+- Independent nodes run in parallel. Each node has retries with backoff and a timeout. Each run has a cost budget, a step limit, and a timeout.
+- A human step pauses the run. The run continues from the UI or the API, also after a server restart ([docs/RECOVERY.md](docs/RECOVERY.md)).
+- Each step sends a typed event (`node.*`, `llm`, `decision`, `artifact`, `run.*`). The UI gets the events over SSE, and the run trace keeps them.
+- The cost of nested runs (sub-agents, test runs, candidates) goes to the parent run while they work ([docs/RUNS.md](docs/RUNS.md)).
+
+## The compiler
+
+The model writes JSON. The compiler makes sure that the JSON is a correct agent before it runs.
+
+```mermaid
+flowchart LR
+    A[Model writes<br/>the spec] --> B[Auto-fix<br/>no model]
+    B --> C{Validate}
+    C -- no errors --> D[Compiled agent]
+    C -- errors --> E[Repair by the model:<br/>JSON Patch for a few errors,<br/>a rewrite for many]
+    E --> B
 ```
-The exit code is 0 only when each task gave an agent.
 
-With `ANVIL_API_TOKEN` set, each `/api` and `/mcp` request needs `Authorization: Bearer <token>` (the UI asks for the token once). Only an event stream accepts `?token=`. `/api/health` and the webhooks stay open: a webhook has its own secret.
+- **Auto-fix** fixes common slips without a model: it unwraps the JSON, renames `source`/`target` to `from`/`to`, makes snake_case ids and updates their references, moves config keys to the right place, and removes duplicates.
+- **Validation** checks the schema, the ports, the DAG, the data references, the field types, and the JavaScript inside `code` nodes. Each diagnostic has a JSON pointer and a hint. There are about 44 codes, for example `UNKNOWN_NODE_TYPE` (with "did you mean"), `EDGE_UNKNOWN_PORT` (with the valid ports), `TEMPLATE_UNKNOWN_FIELD` (with the available fields), `CODE_NOT_UPSTREAM`, `UNGATED_ACTION`, `CLOSED_TOOLS`, `HUMAN_STEP_UNATTENDED`, and `STE_PROMPT`.
+- **Repair** sends only the errors to the model and applies its JSON Patch. The loop keeps the best candidate that it saw.
 
-CLI:
+## System 1 and System 2
+
+<p align="center">
+  <img src="assets/s1s2.svg" alt="A typed question goes to Jev first. A confident answer is used. A low-confidence answer goes to the reasoning model." width="100%">
+</p>
+
+- **System 2** is a reasoning model. The default is `z-ai/glm-5.3-flash` on OpenRouter, in three tiers: `fast`, `balanced`, and `deep`. The tiers set the reasoning effort and the token budget.
+- **System 1** is `typesafe/jev-1.13` on the OpenRouter Decisions API. It gives typed answers with calibrated probabilities in about 0.3 seconds.
+- When Jev is less confident than the threshold, the question goes to System 2.
+
+You can change both models with `ANVIL_LLM_MODEL` and `ANVIL_DECISION_MODEL`. The Usage page shows the cost and the calls of each system.
+
+## Tests, evaluation, and evolution
+
+<p align="center">
+  <img src="assets/ui-tests.png" alt="The test report of an agent: inputs, graded criteria with probabilities, and deterministic checks" width="100%">
+</p>
+
+Each build writes a test suite. Each test has an input, criteria in plain language, and deterministic checks (for example `summary exists` or `action_items minLength 3`). Each test runs as a recorded run. Jev grades each criterion with a probability.
+
+```mermaid
+flowchart LR
+    T[Run the tests] --> G[Jev grades<br/>each criterion]
+    G --> Q{Target<br/>met?}
+    Q -- yes --> P[Publish]
+    Q -- no --> B[Blame each failure:<br/>the agent or the test?]
+    B --> C[A critic reads the outputs<br/>and the trace of each node]
+    C --> J[JSON Patch + a lesson]
+    J --> K[Compile again]
+    K --> T
+```
+
+Rules that keep the evolution honest:
+
+- **The blame step.** Jev decides if a failure is the fault of the agent or of the test (a live value, a contradiction, a test outside the task). The step drops only tests that are wrong. Given tests and feedback tests are never dropped.
+- **Hill climbing.** A candidate replaces the current best only when it scores higher with the same or a higher pass rate.
+- **Invariants.** The step rejects a candidate that removes a `human_approval` gate, removes a named or planned source, or changes the meaning of the task (a Jev intent guard).
+- **No lost agent.** A failed round keeps the best version so far.
+- **Lessons.** Each fix becomes a lesson of the domain, and later builds of the domain read it.
+- **Consistency.** `pass^k` runs each test k times. Best-of-N builds candidates with several builder models, runs one shared suite on each, and a judge model decides between close candidates ([docs/SELECTION.md](docs/SELECTION.md)).
+
+## The runtime harness
+
+When an agent has a definition of done (`acceptance` rules), the harness checks each run. When the check fails, the harness finds the cause, changes the strategy, and tries again ([src/core/harness.ts](src/core/harness.ts)).
+
+```mermaid
+flowchart LR
+    R[Run the agent] --> A{Definition of done<br/>met?}
+    A -- yes --> OK[Result]
+    A -- no --> F[Classify the failure<br/>11 classes]
+    F --> S{Next strategy<br/>on the ladder?}
+    S -- yes --> N[Add a note, tools,<br/>or the deep tier] --> R
+    S -- "no, or a limit" --> PR["Honest partial result:<br/>{status: partial, result, gaps, reason}"]
+```
+
+- **Failure classes:** `no_data`, `source_blocked`, `rate_limited`, `bad_format`, `tool_error`, `timeout`, `wrong_reasoning`, `valid_empty`, `input_problem`, `rule_violation`, `rule_refusal`.
+- **Strategies:** web search, read the page, use the browser, capture the API of the page, find a public API, use another source, write code, fix the format, call the tool again, keep the rules, reason more. Each class has its own ladder, and each strategy runs only once.
+- **Correct answers stay correct.** An input problem, a valid empty result, and a correct refusal under a rule do not cause a retry.
+- **Stops:** the budget, a cancel, an invalid input, the end of the ladder, the attempt limit (3 by default), or an action with a side effect that already ran.
+- **Context management:** long runs compact old turns, keep a ledger of tool calls, stop repeated identical calls, and give a `recall` tool for removed parts.
+
+## Conversation agents and safe actions
+
+A **conversation agent** talks with a user over many turns: a support desk that asks for an order id, or a booking assistant that confirms before it books ([docs/CONVERSATIONS.md](docs/CONVERSATIONS.md)). Each agent has the contract `{reply, done}`, and sessions keep the turns and their tool calls.
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant A as Agent
+    participant G as Action gate (Jev)
+    participant T as Tool
+    U->>A: Cancel my booking B-1042.
+    A->>T: get_booking (read-only)
+    A->>U: Booking B-1042, 2 nights. Cancel it?
+    U->>A: Yes, cancel it.
+    A->>G: cancel_booking. Confirmed? Rules kept?
+    G-->>A: pass (p = 0.94)
+    A->>T: cancel_booking (one time only)
+    A->>U: Done. The booking is cancelled.
+```
+
+- **The action gate** ([docs/GATE.md](docs/GATE.md)). An action that changes something runs only when Jev says yes to three kinds of question: did the user confirm, is the last message more than information, and does the action keep each important rule. The compiler rejects an agent with an action that has no gate (`UNGATED_ACTION`).
+- **Effects** ([docs/EFFECTS.md](docs/EFFECTS.md)). Each action runs one time for each run. A record stops a second send after a retry, an email gets a `Message-ID`, and a webhook gets an `Idempotency-Key`.
+- **Claims without calls.** A reply that says "done" but made no tool call goes back to the agent.
+- **Conversation tests.** A simulated user with a persona, a goal, and facts talks to the agent. A judge reads the full transcript.
+- **Try it in the UI.** The agent page has a chat panel for conversation agents.
+
+## Closed builds: given tools, tests, and rules
+
+You can give a build its tools, its tests, and its rules. Anvil then builds an agent for your systems, not for the open web.
+
+- **Given tools** ([docs/TOOLS.md](docs/TOOLS.md)): OpenAPI 3, OpenAI functions, Anthropic tools, or plain function specs. Each tool becomes a class. An adapter calls the tool over HTTP, or runs a mock with state for tests. In a closed build, the agent uses only these tools, and the compiler checks this (`CLOSED_TOOLS`).
+- **Given tests** ([docs/TESTS.md](docs/TESTS.md)): Anvil tests, input and expected output, question and answer, user scenarios, or message lists, in JSON, JSONL, or YAML.
+- **Rules from a policy** ([docs/POLICY.md](docs/POLICY.md)): a request or an attached file can give terms, limits, and things that the agent must not do. Each important rule becomes part of the definition of done, gets a test that tries to break it, and goes into the action gate.
+
+## Data: files, live sources, and a library that grows
+
+**Files.** Attach files to a build or a run: CSV, TSV, Excel (`xlsx`, `xlsm`), JSON, PDF, Word (`docx`), text, Markdown, HTML, XML, YAML, email (`eml`), and images (metadata). The limit is 20 MB for each file. The builder gives each file a role: a sample input, a reference, or context.
+
+**Live sources** ([docs/LIVE_DATA.md](docs/LIVE_DATA.md)). Each call to a live source goes through one function. It tries a transient failure again with backoff, respects a short `Retry-After`, reports a long one as a rate limit, names a timeout, sends a token only to its own host, and caches GET answers in test runs.
+
+**The library extends itself.** When a task needs a capability that the library does not have, the builder writes a new class, runs its tests for real, repairs it, and registers it. A class has one of 6 kinds: `http`, `code`, `llm`, `browser`, `mcp`, or `tool`. A class written by a model that has side effects stays blocked until a person approves it. Secrets come from `.env` as `{{secrets.NAME}}`, and traces never show them.
+
+<p align="center">
+  <img src="assets/ui-library.png" alt="The Node Library page: custom classes written by Anvil, and the built-in classes" width="100%">
+</p>
+
+**Examples and lessons** ([docs/LIBRARY.md](docs/LIBRARY.md)). Each agent has a class: domain, pattern, source kind, and output kind. A new build uses the best tested agents of the same class as examples, and reads the lessons of its domain: sources that worked or failed, errors that evolve fixed, and tests that were wrong.
+
+<p align="center">
+  <img src="assets/ui-classes.png" alt="The Agent Classes page: agents by domain, with their pattern, source kind, and output kind" width="100%">
+</p>
+
+## The Python sandbox
+
+A `code_agent` step writes one Python program that calls Anvil tools and processes the data. Only the result goes back to the model ([docs/SANDBOX.md](docs/SANDBOX.md)).
+
+```mermaid
+flowchart LR
+    M[code_agent step] -->|program| C[Docker container<br/>no internet]
+    C -->|tool calls| B[Tool bridge]
+    B --> AT[Anvil tools]
+    C -->|pip install| PG[Package gate<br/>wheels only, OSV check]
+    C -.->|allowlist mode| E[Egress check<br/>domains, secret scan, 64 KB]
+    C -->|result only| M
+```
+
+- The container has no internet in the default mode. The package gate installs only wheels and checks each package against OSV. It fails closed.
+- In allowlist mode, the program can call only the allowed domains. A person approves each POST, and the egress check scans each request for secrets.
+- A step that works keeps its program and runs it again without a model call.
+- Build the image with `npm run sandbox:build`. Without Docker, set `ANVIL_SANDBOX=off`. The builder then does not plan `code_agent` steps.
+
+## Autonomy: triggers, health checks, and feedback
+
+**Triggers** ([docs/TRIGGERS.md](docs/TRIGGERS.md)). Agents run on their own. Each firing is a normal traced run.
+
+| Kind | What starts the run |
+|---|---|
+| `schedule` | A 5-field cron with a timezone (`0 9 * * 1-5`, `@daily`), or an interval (`every: "15m"`). |
+| `webhook` | `POST /api/hooks/:agentId/:triggerId` with an HMAC signature or a secret header, a replay window, delivery-id dedupe, and a body limit. It can answer with the agent output. |
+| `poll` | New items in an RSS or Atom feed, a JSON list, or a change on a page. Items run one at a time, oldest first, and no item is lost when a run is busy. |
+| `agent` | Another agent completes or fails. A depth limit stops loops. |
+
+An event that arrives while a run of its trigger is active waits in a queue on disk. The builder reads timing from the request ("every weekday at 9") and writes the trigger, but the trigger starts **disabled** until a person enables it.
+
+**Health checks** ([docs/HEALTH.md](docs/HEALTH.md)). A source can change after the build. Anvil runs the tests of each live data agent at an interval (daily by default) and marks a broken agent with the cause. It can also start evolve and save the fix as a draft version for a person to publish.
+
+**Feedback becomes a test** ([docs/FEEDBACK.md](docs/FEEDBACK.md)). Mark a run output as wrong and write why. Anvil turns the reason into a test, so the agent does not make the same mistake again.
+
+**Human steps.** `human_approval` and `human_input` pause a run until a person answers. In unattended mode (`ANVIL_UNATTENDED=on`), runs approve and skip these steps with a record, and the builder asks no questions.
+
+## MCP in both directions
+
+**Use MCP servers.** Connect any MCP server over Streamable HTTP or stdio on the Connections page. Each tool becomes a class `x_mcp_<server>_<tool>` with typed fields. Read-only tools work at once. Other tools stay locked until a person approves them.
+
+**Be an MCP server.** Anvil is an MCP server at `http://127.0.0.1:8787/mcp` and over stdio (`npm run mcp`). Each agent is a tool. The tools `anvil_build`, `anvil_refine`, `anvil_run_agent`, and `anvil_list_agents` let Claude Code, Claude Desktop, or Cursor build and run agents in a conversation:
+
+```bash
+claude mcp add --transport http anvil http://127.0.0.1:8787/mcp
+```
+
+## Use Anvil: UI, CLI, HTTP API, Docker
+
+### The UI
+
+<p align="center">
+  <img src="assets/ui-agents.png" alt="The Agents page: built agents with their score, pass rate, class, and node types" width="100%">
+</p>
+
+| Page | What you do there |
+|---|---|
+| Build | Describe a process, attach files and tools, and start a build. A live view shows each stage, the graph, the tests, and the spec. |
+| Agents | See each agent with its score and class. Open an agent: graph, run, tests, health, triggers, versions, sandbox, edit and refine, API, and a chat panel for conversation agents. |
+| Classes | See agents by domain and pattern, which agents can be examples, and the lessons of each domain. |
+| Automations | See all triggers with their next run and their counters. |
+| Runs | See each run with its trace. Mark a wrong output, and it becomes a test. |
+| Node Library | See all classes. Generate, write, approve, test, and delete custom classes. |
+| Connections | Connect MCP servers, expose Anvil to MCP clients, enter secrets and host headers, and see the sandbox status. |
+| Benchmark | See benchmark reports: met tasks, mean score, hidden tests, cost, and tokens for each step. |
+| Usage | See cost and calls, split by System 1 and System 2. |
+
+### CLI
+
 ```bash
 npm run anvil -- build "Turn meeting notes into decisions and owner-assigned action items"
+npm run anvil -- build --task tasks/example-meeting-notes.json --out out/notes.agent.json
+npm run anvil -- build --tasks tasks/ --out out/ --concurrency 2   # one build for each *.json, results in out/summary.json
 npm run anvil -- run support-triage-example '{"message":"I was charged twice"}'
+npm run anvil -- run --spec out/notes.agent.json --input input.json
 npm run anvil -- refine <agentId> "Also return a Turkish translation"
+npm run anvil -- test <agentId> --tests given-tests.json          # run given tests on an agent
+npm run anvil -- models check                                    # check that the configured models answer
+npm run anvil -- health [agentId]                                # run health checks now
+npm run anvil -- classify [--force]                              # classify the agents of the library
 npm run anvil -- list
-npm run anvil -- validate path/to/spec.json
-npm run mcp       # Anvil as an MCP server over stdio
+npm run anvil -- validate path/to/spec.json                      # compile a spec and show the diagnostics
+npm run mcp                                                      # Anvil as an MCP server over stdio
+npm run bench -- --suite bench/suite.json --best-of 2            # run a benchmark suite
 ```
 
-Tests (deterministic, no network):
+A task file is JSON: `{"id": "...", "request": "...", "files": ["sample.csv"], "maxBuildUsd": 1}`. File builds run without a person: no questions and no approvals. The exit code is 0 only when each task gives an agent.
+
+### HTTP API
+
+Each agent has its own endpoint:
+
 ```bash
-npm test          # the full suite: compiler, engine, builder stages, harness, sandbox (needs Docker for the real-container tests), library, files, live data, tasks
-npm run typecheck
+curl -X POST http://127.0.0.1:8787/api/agents/lead-scorer-router/run \
+  -H 'Content-Type: application/json' \
+  -d '{"input": {"lead_name": "Ada Lovelace", "company": "Acme", "role": "CTO", "message": "We need SSO for 400 developers."}, "wait": true}'
 ```
 
-## API
+<details>
+<summary><b>All routes</b></summary>
 
-| Method | Path | |
-|---|---|---|
-| POST | `/api/build` | `{request, clarify?, evaluate?, optimize?, testCount?, useLibrary?, examples?, excludeExamples?}` → `{runId}` |
-| POST | `/api/agents/:id/run` | `{input, version?, wait?}`: **every agent's instant endpoint** |
-| POST | `/api/agents/:id/refine` | `{instruction, optimize?}` |
-| POST | `/api/agents/:id/evaluate` · `/evolve` | re-test / self-improve |
-| GET | `/api/runs/:id/events` | SSE: history replay, then live stream |
-| POST | `/api/runs/:id/resume` | `{nodeId, value}`: answer a human step |
-| POST | `/api/runs/:id/cancel` | |
-| GET/POST/PUT/DELETE | `/api/agents[/:id]` | list, import, save a new version, delete |
-| POST | `/api/validate` | compile a spec, return diagnostics |
-| GET/POST/DELETE | `/api/classes[/:type]` | list, save (validated and tested), or delete custom classes |
-| POST | `/api/classes/generate` · `/:type/approve` · `/:type/test` | classsmith, approve side effects, re-run tests |
-| GET · POST/DELETE/PATCH | `/api/triggers` · `/api/agents/:id/triggers[/:tid]` | list, add, remove, enable/disable triggers · `/fire` · `/webhook` (URL and token) |
-| POST | `/api/hooks/:agentId/:triggerId` | webhook entry point (`X-Anvil-Signature` and `X-Anvil-Timestamp`, or the secret in `X-Anvil-Token`) |
-| GET/POST/DELETE | `/api/mcp/servers[/:name]` · `/refresh` · `/approve` | connected MCP servers |
-| ALL | `/mcp` | Anvil as an MCP server (Streamable HTTP) |
-| GET · POST · DELETE | `/api/library` · `/api/library/classify` · `/api/library/lessons/:domain/:id` | classes and lessons of the library, classify the agents, delete a lesson |
-| GET | `/api/registry` · `/api/usage` · `/api/health` | class manifest, cost analytics, model/provider health |
+| Area | Routes |
+|---|---|
+| Build | `POST /api/build` with `{request, answers?, clarify?, evaluate?, optimize?, testCount?, useLibrary?, examples?, excludeExamples?, files?, tools?, tests?, candidates?}` returns `{runId}` |
+| Agents | `GET /api/agents`, `GET /api/agents/:id`, `GET /api/agents/:id/export`, `POST /api/agents` (import), `PUT /api/agents/:id` (new version), `POST /api/agents/:id/current` (publish a version), `DELETE /api/agents/:id`, `POST /api/validate` |
+| Run | `POST /api/agents/:id/run` with `{input, version?, wait?}` |
+| Meta-agents | `POST /api/agents/:id/refine`, `/evaluate`, `/evolve` |
+| Runs | `GET /api/runs`, `GET /api/runs/:id`, `GET /api/runs/:id/events` (SSE: history, then live), `POST /api/runs/:id/resume`, `POST /api/runs/:id/cancel` |
+| Conversations | `POST` and `GET /api/agents/:id/sessions`, `GET /api/sessions/:sid`, `POST /api/sessions/:sid/messages`, `DELETE /api/sessions/:sid` |
+| Feedback | `POST /api/runs/:id/feedback`, `GET /api/agents/:id/feedback`, `POST /api/agents/:id/improve` |
+| Health | `GET /api/health` (open), `GET /api/health/agents`, `GET /api/health/agents/:id`, `POST /api/health/agents/:id/check`, `GET /api/models/check` |
+| Triggers | `GET /api/triggers`, `POST /api/agents/:id/triggers`, `PATCH` and `DELETE /api/agents/:id/triggers/:tid`, `POST .../fire`, `GET .../webhook`, `POST /api/hooks/:agentId/:triggerId` |
+| Classes | `GET /api/classes`, `GET /api/classes/:type`, `POST /api/classes`, `POST /api/classes/generate`, `POST /api/classes/:type/approve`, `POST /api/classes/:type/test`, `DELETE /api/classes/:type` |
+| Library | `GET /api/library`, `POST /api/library/classify`, `DELETE /api/library/lessons/:domain/:id` |
+| Files | `POST /api/files` (multipart), `GET /api/files/:id`, `GET /api/files/:id/content`, `DELETE /api/files/:id` |
+| Secrets | `GET /api/secrets`, `PUT` and `DELETE /api/secrets/:name`, `PUT /api/host-headers/:host` |
+| Sandbox | `GET /api/sandbox/status`, `GET` and `PUT /api/agents/:id/sandbox` |
+| MCP | `GET` and `POST /api/mcp/servers`, `POST /api/mcp/servers/:name/refresh`, `POST /api/mcp/servers/:name/approve`, `DELETE /api/mcp/servers/:name`, `GET /api/mcp/expose`, `ALL /mcp` |
+| Other | `GET /api/registry`, `GET /api/usage`, `GET /api/bench` |
 
-## Configuration (`.env`)
-`OPENROUTER_API_KEY` (required) · `ANVIL_LLM_MODEL` · `ANVIL_DECISION_MODEL` · `ANVIL_TIERS` (JSON) · `ANVIL_CONFIDENCE_THRESHOLD` · `ANVIL_EVOLVE_TARGET` · `ANVIL_EVOLVE_MAX_ROUNDS` · `ANVIL_REPAIR_MAX_ATTEMPTS` · `ANVIL_MAX_PARALLEL` · `ANVIL_PROVIDER_SORT` (throughput | latency | price | none) · `ANVIL_SLOW_CALL_MS` / `ANVIL_MIN_TOKENS_PER_SEC` / `ANVIL_PROVIDER_COOLDOWN_MS` (**self-calibrating provider health**: providers observed to be slow are skipped for a cooldown period) · `ANVIL_SEARCH_PROVIDERS` (default `openrouter,wikipedia,duckduckgo`: OpenRouter's server-side search with the same key, then Wikipedia's official API, then DuckDuckGo) · `ANVIL_NODE_TIMEOUT_MS` (default per-node timeout; classes can declare their own, and meta-steps are bounded only by the run policy) · `ANVIL_TH_*` (the decision thresholds of the builder and the harness, for example `ANVIL_TH_DIAGNOSIS_CONFIDENCE` and `ANVIL_TH_INTENT_KEEP`. `.env.example` lists all of them with their defaults) · `ANVIL_SW_*` (the weights of the source score in the source plan) · `ANVIL_LIBRARY_*` (the examples and the lessons of the library, see docs/LIBRARY.md).
+With `ANVIL_API_TOKEN` set, each `/api` and `/mcp` request needs `Authorization: Bearer <token>`. `/api/health` and the webhooks stay open, because a webhook has its own secret.
 
-## Layout
+</details>
+
+### Docker and production
+
+```bash
+npm run build && npm start        # UI and API on http://127.0.0.1:8787
+docker compose up --build         # Anvil, the Python sandbox, and Chromium in containers
 ```
-src/core/        IR types, template language, registry, validator (compiler), engine, graph utils
-src/core/nodes/  the 20 public node classes
-src/core/tools/  web fetch/search, BM25, safe calculator, JS sandbox, agent tools
-src/llm/         OpenRouter client (chat + decisions, retries, provider health), Brain (S1+S2, structured JSON, escalation)
-src/builder/     anvil_* meta-classes, compiler loop, evaluator, meta-agent specs, IR guide + few-shot example
-src/runtime/     RunManager (lifecycle, SSE fan-out, HITL, nested runs), composition root
-src/store/       atomic JSON file store (agents are git-diffable JSON)
-src/server/      Hono REST + SSE
+
+The compose file mounts the Docker socket, so the sandbox starts its containers on the Docker of the host. The ports listen only on 127.0.0.1.
+
+## Configuration
+
+All settings are environment variables. [.env.example](.env.example) lists each one with its default and a short note. The main groups:
+
+| Group | Examples |
+|---|---|
+| Models | `ANVIL_LLM_MODEL`, `ANVIL_DECISION_MODEL`, `ANVIL_TIERS`, `ANVIL_BUILD_MODELS` |
+| Thresholds | `ANVIL_CONFIDENCE_THRESHOLD`, `ANVIL_TH_*` (for example `ANVIL_TH_ACTION_GATE`, `ANVIL_TH_INTENT_KEEP`) |
+| Evolution | `ANVIL_EVOLVE_TARGET`, `ANVIL_EVOLVE_MAX_ROUNDS`, `ANVIL_EVAL_REPEATS`, `ANVIL_BEST_OF` |
+| Cost | `ANVIL_BUILD_CONFIRM_USD`, `ANVIL_HEALTH_BUDGET_USD`, `ANVIL_PROFILE=fast` |
+| Sources | `ANVIL_LIVE_*`, `ANVIL_SW_*`, `ANVIL_SEARCH_PROVIDERS`, `ANVIL_HOST_HEADERS` |
+| Sandbox | `ANVIL_SANDBOX`, `ANVIL_SANDBOX_NETWORK`, `ANVIL_PACKAGE_*`, `ANVIL_EGRESS_MAX_BODY` |
+| Server | `ANVIL_PORT`, `ANVIL_HOST`, `ANVIL_API_TOKEN`, `ANVIL_DATA_DIR` |
+| Triggers | `ANVIL_TRIGGER_QUEUE_*`, `ANVIL_WEBHOOK_*` |
+
+## Project layout
+
+```text
+src/core/        IR types, templates, registry, compiler (validator), engine, harness, action gate, effects
+src/core/nodes/  the 27 public node classes
+src/core/tools/  web fetch and search, BM25, calculator, JS sandbox, agent tools
+src/llm/         OpenRouter client (chat and decisions, retries, provider health), Brain (S1 + S2)
+src/builder/     anvil_* stages, compiler loop, evaluation, sources, library, best-of-N, meta-agent specs
+src/runtime/     run manager, triggers, sessions, sandbox, package gate, MCP, secrets, health, feedback, files
+src/server/      Hono REST, SSE, webhooks
+src/bench/       benchmark runner and metrics
 web/             React + TypeScript + React Flow UI
-tests/           vitest suites with a fake model client
+sandbox/         the Python sandbox image
+docs/            one page for each feature
+tests/           45 vitest suites with a fake model client
 ```
 
-## Bundled agents
-`data/agents/` ships a small library the builder produced end to end (meeting-notes distiller, lead scorer & router, contract risk reviewer with human approval, company research brief, job-posting analyzer with a refined v2, support triage example), each with its tests and evaluation report. Run logs (`data/runs`) and memory (`data/kv`) stay local.
+## FAQ
 
-## Roadmap
-See [ROADMAP.md](ROADMAP.md): triggers and schedules, a two-way MCP bridge, production drift monitoring, feedback that becomes regression tests, governance, a builder self-evolution benchmark, a cost optimizer, and more.
+<details>
+<summary><b>What does a build cost?</b></summary>
 
-## Notes
-- Local-first. The API binds to 127.0.0.1. `code` nodes use `node:vm` with a timeout and no I/O bindings. That is isolation for operator-trusted code, not a hostile-code sandbox.
-- Everything is on disk in `data/` as JSON: agents with their full version history, run traces, and memory.
+The triage step estimates the cost before the build starts. A build above $0.50 asks for approval (`ANVIL_BUILD_CONFIRM_USD`), and the builder policy stops a build at $3. The Usage page shows the real cost of each build and each run. Each run of an agent has its own budget in `policy.maxCostUsd`.
+</details>
+
+<details>
+<summary><b>Can I use other models?</b></summary>
+
+Yes. Any OpenRouter model can be System 2 (`ANVIL_LLM_MODEL`). System 1 needs a model on the OpenRouter Decisions API (`ANVIL_DECISION_MODEL`). Best-of-N can use a list of builder models (`ANVIL_BUILD_MODELS`).
+</details>
+
+<details>
+<summary><b>Do I need Docker?</b></summary>
+
+No. Docker is only for the Python sandbox (`code_agent` steps and the `run_code` tool). Without Docker, set `ANVIL_SANDBOX=off`. The rest of Anvil works the same.
+</details>
+
+<details>
+<summary><b>Where is my data?</b></summary>
+
+On your disk, in `data/`, as JSON files: agents with their full version history, classes, run traces, memory, and the trigger queue. Secrets entered in the UI are encrypted with AES-256-GCM in `data/secrets.enc.json`. Change the folder with `ANVIL_DATA_DIR`.
+</details>
+
+<details>
+<summary><b>Is it safe to run code that a model wrote?</b></summary>
+
+`code` nodes run JavaScript on `node:vm` with a timeout and no I/O. That is isolation for code that the operator trusts, not a sandbox for hostile code. Python runs in a Docker container with no internet, and its packages go through the package gate. Actions with side effects need the action gate, and model-written classes with side effects need a person to approve them.
+</details>
+
+<details>
+<summary><b>Do the tests need the network or an API key?</b></summary>
+
+No. `npm test` runs 424 tests with a fake model client. The sandbox tests that need Docker skip when Docker is not available. Run `npm run check` for the type check and the tests together.
+</details>
+
+<details>
+<summary><b>Can I edit an agent by hand?</b></summary>
+
+Yes. An agent is a JSON file. Edit it in the UI (Edit and refine), import it with `POST /api/agents`, or change it with a sentence through `anvil-refiner`. The compiler checks each new version.
+</details>
 
 ## License
 
 Copyright 2026 Ulaş Taylan Met. Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
+
+---
+
+<p align="center">
+  Made by <b>Ulaş Taylan Met</b> ·
+  <a href="https://www.linkedin.com/in/ulastaylano">LinkedIn</a> ·
+  <a href="https://x.com/ulasdesouza24">X</a> ·
+  <a href="https://github.com/ulasdesouza24">GitHub</a>
+</p>

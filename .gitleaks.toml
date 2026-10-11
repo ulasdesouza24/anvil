@@ -1,0 +1,14 @@
+# The tests of the secret detector need fake keys. Only these exact fake values are allowed.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Fake values in the tests"
+regexTarget = "match"
+regexes = [
+  '''sk-or-v1-0123456789abcdef0123''',
+  '''AKIAABCDEFGHIJKLMNOP''',
+  '''from-env-123456''',
+  '''ghp_abcdefghijklmnop1234''',
+  '''tok-1234567890abcd''',
+]
