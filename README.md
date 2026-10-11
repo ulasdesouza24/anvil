@@ -40,18 +40,19 @@ An Anvil agent is not a long prompt. It is a typed JSON workflow of **node class
 4. [The compiler](#the-compiler)
 5. [System 1 and System 2](#system-1-and-system-2)
 6. [Tests, evaluation, and evolution](#tests-evaluation-and-evolution)
-7. [The runtime harness](#the-runtime-harness)
-8. [Conversation agents and safe actions](#conversation-agents-and-safe-actions)
-9. [Closed builds: given tools, tests, and rules](#closed-builds-given-tools-tests-and-rules)
-10. [Data: files, live sources, and a library that grows](#data-files-live-sources-and-a-library-that-grows)
-11. [The Python sandbox](#the-python-sandbox)
-12. [Autonomy: triggers, health checks, and feedback](#autonomy-triggers-health-checks-and-feedback)
-13. [MCP in both directions](#mcp-in-both-directions)
-14. [Use Anvil: UI, CLI, HTTP API, Docker](#use-anvil-ui-cli-http-api-docker)
-15. [Configuration](#configuration)
-16. [Project layout](#project-layout)
-17. [FAQ](#faq)
-18. [License](#license)
+7. [Best-of-N and pass^k](#best-of-n-and-passk)
+8. [The runtime harness](#the-runtime-harness)
+9. [Conversation agents and safe actions](#conversation-agents-and-safe-actions)
+10. [Closed builds: given tools, tests, and rules](#closed-builds-given-tools-tests-and-rules)
+11. [Data: files, live sources, and a library that grows](#data-files-live-sources-and-a-library-that-grows)
+12. [The Python sandbox](#the-python-sandbox)
+13. [Autonomy: triggers, health checks, and feedback](#autonomy-triggers-health-checks-and-feedback)
+14. [MCP in both directions](#mcp-in-both-directions)
+15. [Use Anvil: UI, CLI, HTTP API, Docker](#use-anvil-ui-cli-http-api-docker)
+16. [Configuration](#configuration)
+17. [Project layout](#project-layout)
+18. [FAQ](#faq)
+19. [License](#license)
 
 ## Quickstart
 
@@ -200,9 +201,18 @@ flowchart LR
   <img src="assets/s1s2.svg" alt="A typed question goes to Jev first. A confident answer is used. A low-confidence answer goes to the reasoning model." width="100%">
 </p>
 
-- **System 2** is a reasoning model. The default is `z-ai/glm-5.3-flash` on OpenRouter, in three tiers: `fast`, `balanced`, and `deep`. The tiers set the reasoning effort and the token budget.
-- **System 1** is `typesafe/jev-1.13` on the OpenRouter Decisions API. It gives typed answers with calibrated probabilities in about 0.3 seconds.
-- When Jev is less confident than the threshold, the question goes to System 2.
+Anvil uses two kinds of model, like fast and slow thinking:
+
+| | System 1: fast decisions | System 2: reasoning |
+|---|---|---|
+| Job | Answers typed questions: yes or no, a choice, a score | Writes, plans, extracts, and calls tools |
+| Answer | A typed value with a calibrated probability | Text or JSON, with reasons |
+| Speed | About 0.3 seconds | Seconds to minutes |
+| Used for | Triage, plan checks, model tiers, test grades, failure blame, the action gate, `decision` nodes | Analyze, architect, compose, testgen, the critic, `llm` and `agent` nodes |
+| Default model | `typesafe/jev-1.13` (OpenRouter Decisions API) | `z-ai/glm-5.3-flash`, in the tiers `fast`, `balanced`, and `deep` |
+| Setting | `ANVIL_DECISION_MODEL` | `ANVIL_LLM_MODEL`, `ANVIL_TIERS` |
+
+When System 1 is less confident than the threshold (`ANVIL_CONFIDENCE_THRESHOLD`, default 0.6), the question goes to System 2. Most decisions cost one fast call, and only the hard ones cost a reasoning call.
 
 You can change both models with `ANVIL_LLM_MODEL` and `ANVIL_DECISION_MODEL`. The Usage page shows the cost and the calls of each system.
 
@@ -228,12 +238,54 @@ flowchart LR
 
 Rules that keep the evolution honest:
 
-- **The blame step.** Jev decides if a failure is the fault of the agent or of the test (a live value, a contradiction, a test outside the task). The step drops only tests that are wrong. Given tests and feedback tests are never dropped.
+- **The blame step.** System 1 decides if a failure is the fault of the agent or of the test (a live value, a contradiction, a test outside the task). The step drops only tests that are wrong. Given tests and feedback tests are never dropped.
 - **Hill climbing.** A candidate replaces the current best only when it scores higher with the same or a higher pass rate.
 - **Invariants.** The step rejects a candidate that removes a `human_approval` gate, removes a named or planned source, or changes the meaning of the task (a Jev intent guard).
 - **No lost agent.** A failed round keeps the best version so far.
 - **Lessons.** Each fix becomes a lesson of the domain, and later builds of the domain read it.
-- **Consistency.** `pass^k` runs each test k times. Best-of-N builds candidates with several builder models, runs one shared suite on each, and a judge model decides between close candidates ([docs/SELECTION.md](docs/SELECTION.md)).
+- **Consistency.** See [Best-of-N and pass^k](#best-of-n-and-passk).
+
+## Best-of-N and pass^k
+
+One build is one sample. The same request can give an agent that scores 0.98 in one build and 0.49 in the next. Anvil fixes this with two tools ([docs/SELECTION.md](docs/SELECTION.md)).
+
+<p align="center">
+  <img src="assets/best-of-n.svg" alt="Three builder models build candidates. One candidate times out. The others run a shared test suite three times. Candidate A passes 3 of 4 tests every time and wins." width="100%">
+</p>
+
+**pass^k** measures if an agent is consistent, not lucky. The evaluation runs each test k times.
+
+| Field | Meaning |
+|---|---|
+| `passed` (a test) | true only when every one of the k runs passed |
+| `passRate` (the report) | the share of the tests where every run passed: this is pass^k |
+| `passAny` (the report) | the share of the tests with at least one good run |
+| `score` (a test) | the mean score of the k runs |
+
+A run that the environment stopped (for example a rate limit) does not count. Each run of a conversation test gets its own session, so mock tools start from their start state.
+
+**Best-of-N** builds several candidates and keeps the best one:
+
+| Step | What happens |
+|---|---|
+| 1. Model check | Each builder model gets a small test request. A model that does not answer is not used. |
+| 2. Candidates | Each model builds one full candidate in parallel, without publishing it. A candidate that fails or is too slow is out, and its build stops at once, so it costs nothing more. When two candidates are ready, the others get a short grace time. |
+| 3. Shared suite | The given tests first, then the tests of all candidates without duplicates. Each candidate runs the same suite. |
+| 4. pass^k | Each candidate runs each test 3 times. A given test counts 2 times. The ranking is the weighted pass^k rate, then the weighted score. |
+| 5. Decision | A leader with a lead larger than the margin (0.05) wins. Close candidates go to a judge model. The judge sees them under random letters, never the model name, and weighs each failure: severe (a broken rule, an action without confirmation, an invented fact), medium (a wrong result), or light (format, tone). |
+| 6. Publish | The winner is saved with its tests and `meta.selection`. The other candidates are not saved. |
+
+Measured on the practice suite (5 cases, 13 hidden tests, the fast profile):
+
+| | One build (6 runs) | Best-of-3 (3 runs) |
+|---|---|---|
+| Mean score on hidden tests | 0.823 | 0.935 |
+| Range (max − min) | 0.310 | 0.061 |
+| Cases that meet their expectations | 3 to 5 of 5 | 5 of 5 in each run |
+| Cost of a run | about $0.10 | $1.11 to $1.80 |
+| Time of a run | 5 to 12 minutes | about 24 minutes |
+
+Turn it on for all builds with `ANVIL_BEST_OF=on`, for one build with `candidates` in `POST /api/build` (a number, or `"auto"` for one candidate for each model), or with the **Best of N** switch on the Build page. Set the models with `ANVIL_BUILD_MODELS` and the judge with `ANVIL_SELECT_JUDGE_MODEL`.
 
 ## The runtime harness
 

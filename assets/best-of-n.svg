@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="600" viewBox="0 0 1280 600" role="img" aria-labelledby="t d">
+<title id="t">Best-of-N and pass^k</title>
+<desc id="d">Several builder models each build a candidate. Each candidate runs a shared test suite three times. A test passes only when all runs pass. The leader wins, or a judge decides between close candidates.</desc>
+<defs><pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" fill="none" stroke="#1b1e25"/></pattern>
+<style>.flow{stroke-dasharray:5 7;animation:dash 1.2s linear infinite}@keyframes dash{to{stroke-dashoffset:-24}}
+@keyframes s1{0%,4.29%{opacity:0}6.79%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s1{opacity:0;animation:s1 14.0s linear infinite}@keyframes s2{0%,6.43%{opacity:0}8.93%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s2{opacity:0;animation:s2 14.0s linear infinite}@keyframes s3{0%,8.57%{opacity:0}11.07%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s3{opacity:0;animation:s3 14.0s linear infinite}@keyframes s4{0%,17.14%{opacity:0}19.64%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s4{opacity:0;animation:s4 14.0s linear infinite}@keyframes s5{0%,21.43%{opacity:0}23.93%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s5{opacity:0;animation:s5 14.0s linear infinite}@keyframes s6{0%,24.29%{opacity:0}26.79%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s6{opacity:0;animation:s6 14.0s linear infinite}@keyframes s7{0%,24.93%{opacity:0}27.43%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s7{opacity:0;animation:s7 14.0s linear infinite}@keyframes s8{0%,25.57%{opacity:0}28.07%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s8{opacity:0;animation:s8 14.0s linear infinite}@keyframes s9{0%,42.86%{opacity:0}45.36%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s9{opacity:0;animation:s9 14.0s linear infinite}@keyframes s10{0%,26.21%{opacity:0}28.71%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s10{opacity:0;animation:s10 14.0s linear infinite}@keyframes s11{0%,26.86%{opacity:0}29.36%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s11{opacity:0;animation:s11 14.0s linear infinite}@keyframes s12{0%,27.50%{opacity:0}30.00%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s12{opacity:0;animation:s12 14.0s linear infinite}@keyframes s13{0%,43.93%{opacity:0}46.43%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s13{opacity:0;animation:s13 14.0s linear infinite}@keyframes s14{0%,28.14%{opacity:0}30.64%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s14{opacity:0;animation:s14 14.0s linear infinite}@keyframes s15{0%,28.79%{opacity:0}31.29%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s15{opacity:0;animation:s15 14.0s linear infinite}@keyframes s16{0%,29.43%{opacity:0}31.93%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s16{opacity:0;animation:s16 14.0s linear infinite}@keyframes s17{0%,45.00%{opacity:0}47.50%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s17{opacity:0;animation:s17 14.0s linear infinite}@keyframes s18{0%,30.07%{opacity:0}32.57%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s18{opacity:0;animation:s18 14.0s linear infinite}@keyframes s19{0%,30.71%{opacity:0}33.21%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s19{opacity:0;animation:s19 14.0s linear infinite}@keyframes s20{0%,31.36%{opacity:0}33.86%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s20{opacity:0;animation:s20 14.0s linear infinite}@keyframes s21{0%,46.07%{opacity:0}48.57%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s21{opacity:0;animation:s21 14.0s linear infinite}@keyframes s22{0%,32.00%{opacity:0}34.50%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s22{opacity:0;animation:s22 14.0s linear infinite}@keyframes s23{0%,32.64%{opacity:0}35.14%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s23{opacity:0;animation:s23 14.0s linear infinite}@keyframes s24{0%,33.29%{opacity:0}35.79%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s24{opacity:0;animation:s24 14.0s linear infinite}@keyframes s25{0%,42.86%{opacity:0}45.36%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s25{opacity:0;animation:s25 14.0s linear infinite}@keyframes s26{0%,33.93%{opacity:0}36.43%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s26{opacity:0;animation:s26 14.0s linear infinite}@keyframes s27{0%,34.57%{opacity:0}37.07%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s27{opacity:0;animation:s27 14.0s linear infinite}@keyframes s28{0%,35.21%{opacity:0}37.71%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s28{opacity:0;animation:s28 14.0s linear infinite}@keyframes s29{0%,43.93%{opacity:0}46.43%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s29{opacity:0;animation:s29 14.0s linear infinite}@keyframes s30{0%,35.86%{opacity:0}38.36%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s30{opacity:0;animation:s30 14.0s linear infinite}@keyframes s31{0%,36.50%{opacity:0}39.00%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s31{opacity:0;animation:s31 14.0s linear infinite}@keyframes s32{0%,37.14%{opacity:0}39.64%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s32{opacity:0;animation:s32 14.0s linear infinite}@keyframes s33{0%,45.00%{opacity:0}47.50%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s33{opacity:0;animation:s33 14.0s linear infinite}@keyframes s34{0%,37.79%{opacity:0}40.29%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s34{opacity:0;animation:s34 14.0s linear infinite}@keyframes s35{0%,38.43%{opacity:0}40.93%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s35{opacity:0;animation:s35 14.0s linear infinite}@keyframes s36{0%,39.07%{opacity:0}41.57%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s36{opacity:0;animation:s36 14.0s linear infinite}@keyframes s37{0%,46.07%{opacity:0}48.57%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s37{opacity:0;animation:s37 14.0s linear infinite}@keyframes s38{0%,47.14%{opacity:0}49.64%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s38{opacity:0;animation:s38 14.0s linear infinite}@keyframes s39{0%,51.43%{opacity:0}53.93%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s39{opacity:0;animation:s39 14.0s linear infinite}@keyframes g40{0%,52.86%{width:0}60.86%,94.29%{width:180px}96.29%,100%{width:0}}.g40{animation:g40 14.0s ease-out infinite}@keyframes s41{0%,58.57%{opacity:0}61.07%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s41{opacity:0;animation:s41 14.0s linear infinite}@keyframes g42{0%,52.86%{width:0}60.86%,94.29%{width:120px}96.29%,100%{width:0}}.g42{animation:g42 14.0s ease-out infinite}@keyframes s43{0%,58.57%{opacity:0}61.07%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s43{opacity:0;animation:s43 14.0s linear infinite}@keyframes s44{0%,64.29%{opacity:0}66.79%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s44{opacity:0;animation:s44 14.0s linear infinite}@keyframes s45{0%,72.86%{opacity:0}75.36%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s45{opacity:0;animation:s45 14.0s linear infinite}@keyframes s46{0%,72.86%{opacity:0}75.36%,94.29%{opacity:1}96.29%,100%{opacity:0}}.s46{opacity:0;animation:s46 14.0s linear infinite}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;opacity:1!important}}</style></defs>
+<rect width="1280" height="600" rx="20" fill="#0b0c0e"/><rect width="1280" height="600" rx="20" fill="url(#grid)" opacity=".6"/><rect x=".5" y=".5" width="1279" height="599" rx="20" fill="none" stroke="#232731"/>
+<text x="48" y="50" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" fill="#e8eaee" font-weight="800">Best-of-N and pass^k: keep the agent that passes every time</text>
+<text x="48" y="74" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="13" fill="#9097a4">The same request can give a 0.98 agent in one build and a 0.49 agent in the next. Anvil builds several candidates and measures each one more than once.</text>
+<rect x="48" y="250" width="150" height="92" rx="12" fill="#111317" stroke="#f97316" stroke-opacity=".8"/>
+<text x="64" y="276" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="14" fill="#e8eaee" font-weight="700">request</text>
+<text x="64" y="298" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="12" fill="#9097a4">+ given tests</text>
+<text x="64" y="318" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" fill="#fb923c">candidates: auto</text>
+<path d="M 200 296 C 230 296 230 180 258 180" fill="none" stroke="#3a3f4d" stroke-width="1.6"/>
+<path class="flow" d="M 200 296 C 230 296 230 180 258 180" fill="none" stroke="#f97316" stroke-opacity=".6" stroke-width="1.6"/>
+<g class="s1"><rect x="260" y="140" width="200" height="80" rx="12" fill="#111317" stroke="#2e3340"/>
+<text x="276" y="166" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="14" font-weight="700" fill="#e8eaee">Candidate A</text><text x="276" y="186" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" fill="#9097a4">builder model 1</text>
+<rect x="386" y="154" width="14" height="10" rx="3" fill="none" stroke="#a78bfa" stroke-opacity=".7"/>
+<rect x="408" y="146" width="14" height="10" rx="3" fill="none" stroke="#a78bfa" stroke-opacity=".7"/>
+<rect x="408" y="162" width="14" height="10" rx="3" fill="none" stroke="#a78bfa" stroke-opacity=".7"/>
+<rect x="430" y="154" width="14" height="10" rx="3" fill="none" stroke="#a78bfa" stroke-opacity=".7"/>
+<text x="276" y="206" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="11" fill="#5d6472">a full build, not published</text></g>
+<path d="M 200 296 C 230 296 230 300 258 300" fill="none" stroke="#3a3f4d" stroke-width="1.6"/>
+<path class="flow" d="M 200 296 C 230 296 230 300 258 300" fill="none" stroke="#f97316" stroke-opacity=".6" stroke-width="1.6"/>
+<g class="s2"><rect x="260" y="260" width="200" height="80" rx="12" fill="#111317" stroke="#2e3340"/>
+<text x="276" y="286" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="14" font-weight="700" fill="#e8eaee">Candidate B</text><text x="276" y="306" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" fill="#9097a4">builder model 2</text>
+<rect x="386" y="274" width="14" height="10" rx="3" fill="none" stroke="#a78bfa" stroke-opacity=".7"/>
+<rect x="408" y="266" width="14" height="10" rx="3" fill="none" stroke="#a78bfa" stroke-opacity=".7"/>
+<rect x="408" y="282" width="14" height="10" rx="3" fill="none" stroke="#a78bfa" stroke-opacity=".7"/>
+<rect x="430" y="274" width="14" height="10" rx="3" fill="none" stroke="#a78bfa" stroke-opacity=".7"/>
+<text x="276" y="326" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="11" fill="#5d6472">a full build, not published</text></g>
+<path d="M 200 296 C 230 296 230 420 258 420" fill="none" stroke="#3a3f4d" stroke-width="1.6"/>
+<path class="flow" d="M 200 296 C 230 296 230 420 258 420" fill="none" stroke="#f97316" stroke-opacity=".6" stroke-width="1.6"/>
+<g class="s3"><rect x="260" y="380" width="200" height="80" rx="12" fill="#111317" stroke="#2e3340"/>
+<text x="276" y="406" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="14" font-weight="700" fill="#e8eaee">Candidate C</text><text x="276" y="426" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" fill="#9097a4">builder model 3</text>
+<rect x="386" y="394" width="14" height="10" rx="3" fill="none" stroke="#a78bfa" stroke-opacity=".7"/>
+<rect x="408" y="386" width="14" height="10" rx="3" fill="none" stroke="#a78bfa" stroke-opacity=".7"/>
+<rect x="408" y="402" width="14" height="10" rx="3" fill="none" stroke="#a78bfa" stroke-opacity=".7"/>
+<rect x="430" y="394" width="14" height="10" rx="3" fill="none" stroke="#a78bfa" stroke-opacity=".7"/>
+<text x="276" y="446" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="11" fill="#5d6472">a full build, not published</text></g>
+<g class="s4"><rect x="260" y="380" width="200" height="80" rx="12" fill="#1a0f10" stroke="#f87171" stroke-opacity=".7"/><text x="276" y="406" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="14" font-weight="700" fill="#f87171">Candidate C: out</text><text x="276" y="426" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="11" fill="#9097a4">no answer in the time limit.</text><text x="276" y="442" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="11" fill="#9097a4">Its build stops. No more cost.</text></g>
+<g class="s5">
+<text x="520" y="128" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="13" fill="#e8eaee" font-weight="700">Shared test suite, each test runs k = 3 times</text>
+<text x="520" y="146" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="11" fill="#9097a4">given tests first (weight 2), then the tests of the candidates</text>
+</g>
+<text x="540" y="166" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="10" fill="#5d6472">t1 given</text>
+<text x="624" y="166" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="10" fill="#5d6472">t2 given</text>
+<text x="708" y="166" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="10" fill="#5d6472">t3</text>
+<text x="792" y="166" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="10" fill="#5d6472">t4</text>
+<text x="522" y="194" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#9097a4" font-weight="700">A</text>
+<text x="522" y="194" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#5d6472">A</text>
+<circle class="s6" cx="548" cy="190" r="5.5" fill="#34d399"/>
+<circle class="s7" cx="564" cy="190" r="5.5" fill="#34d399"/>
+<circle class="s8" cx="580" cy="190" r="5.5" fill="#34d399"/>
+<text class="s9" x="564" y="220" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#34d399" text-anchor="middle">✓ pass</text>
+<circle class="s10" cx="632" cy="190" r="5.5" fill="#34d399"/>
+<circle class="s11" cx="648" cy="190" r="5.5" fill="#34d399"/>
+<circle class="s12" cx="664" cy="190" r="5.5" fill="#34d399"/>
+<text class="s13" x="648" y="220" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#34d399" text-anchor="middle">✓ pass</text>
+<circle class="s14" cx="716" cy="190" r="5.5" fill="#34d399"/>
+<circle class="s15" cx="732" cy="190" r="5.5" fill="#34d399"/>
+<circle class="s16" cx="748" cy="190" r="5.5" fill="#34d399"/>
+<text class="s17" x="732" y="220" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#34d399" text-anchor="middle">✓ pass</text>
+<circle class="s18" cx="800" cy="190" r="5.5" fill="#34d399"/>
+<circle class="s19" cx="816" cy="190" r="5.5" fill="#f87171"/>
+<circle class="s20" cx="832" cy="190" r="5.5" fill="#34d399"/>
+<text class="s21" x="816" y="220" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#f87171" text-anchor="middle">✗ fail</text>
+<line x1="530" y1="230" x2="866" y2="230" stroke="#232731"/>
+<text x="522" y="314" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#9097a4" font-weight="700">B</text>
+<text x="522" y="314" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#5d6472">B</text>
+<circle class="s22" cx="548" cy="310" r="5.5" fill="#34d399"/>
+<circle class="s23" cx="564" cy="310" r="5.5" fill="#34d399"/>
+<circle class="s24" cx="580" cy="310" r="5.5" fill="#34d399"/>
+<text class="s25" x="564" y="340" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#34d399" text-anchor="middle">✓ pass</text>
+<circle class="s26" cx="632" cy="310" r="5.5" fill="#34d399"/>
+<circle class="s27" cx="648" cy="310" r="5.5" fill="#f87171"/>
+<circle class="s28" cx="664" cy="310" r="5.5" fill="#34d399"/>
+<text class="s29" x="648" y="340" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#f87171" text-anchor="middle">✗ fail</text>
+<circle class="s30" cx="716" cy="310" r="5.5" fill="#34d399"/>
+<circle class="s31" cx="732" cy="310" r="5.5" fill="#34d399"/>
+<circle class="s32" cx="748" cy="310" r="5.5" fill="#f87171"/>
+<text class="s33" x="732" y="340" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#f87171" text-anchor="middle">✗ fail</text>
+<circle class="s34" cx="800" cy="310" r="5.5" fill="#34d399"/>
+<circle class="s35" cx="816" cy="310" r="5.5" fill="#34d399"/>
+<circle class="s36" cx="832" cy="310" r="5.5" fill="#34d399"/>
+<text class="s37" x="816" y="340" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="12" fill="#34d399" text-anchor="middle">✓ pass</text>
+<line x1="530" y1="350" x2="866" y2="350" stroke="#232731"/>
+<g class="s38"><rect x="520" y="390" width="350" height="96" rx="12" fill="#111317" stroke="#2e3340"/>
+<text x="536" y="414" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="12" fill="#e8eaee">pass^k: a test passes only when all k runs pass.</text>
+<text x="536" y="434" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="12" fill="#9097a4">One lucky run does not count. A test with 2 of 3</text>
+<text x="536" y="452" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="12" fill="#9097a4">good runs is a failed test. passAny shows the share</text>
+<text x="536" y="470" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="12" fill="#9097a4">with at least one good run.</text>
+</g>
+<g class="s39">
+<text x="910" y="128" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="13" fill="#e8eaee" font-weight="700">Ranking</text>
+<text x="910" y="146" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="11" fill="#9097a4">weighted pass^k, then the score</text>
+</g>
+<text x="910" y="186" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="12" fill="#e8eaee">Candidate A</text>
+<rect x="910" y="196" width="240" height="12" rx="6" fill="#1b1e25"/><rect class="g40" x="910" y="196" height="12" rx="6" fill="#34d399"/>
+<text x="910" y="228" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" fill="#34d399" class="s41">pass^k 3/4 · score 0.95</text>
+<text x="910" y="306" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="12" fill="#e8eaee">Candidate B</text>
+<rect x="910" y="316" width="240" height="12" rx="6" fill="#1b1e25"/><rect class="g42" x="910" y="316" height="12" rx="6" fill="#fbbf24"/>
+<text x="910" y="348" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="11" fill="#fbbf24" class="s43">pass^k 2/4 · score 0.91</text>
+<g class="s44"><rect x="900" y="390" width="330" height="96" rx="12" fill="#111317" stroke="#2e3340"/>
+<text x="916" y="414" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="12" fill="#e8eaee">Lead larger than the margin (0.05)?</text>
+<text x="916" y="434" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="12" fill="#34d399">Yes: the leader wins.</text>
+<text x="916" y="452" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="12" fill="#9097a4">No: a judge model reads the failures of the</text>
+<text x="916" y="470" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="12" fill="#9097a4">close candidates under random letters.</text>
+</g>
+<g class="s45"><rect x="900" y="506" width="330" height="56" rx="12" fill="#0f2a20" stroke="#34d399" stroke-opacity=".7"/>
+<text x="916" y="530" font-family="JetBrains Mono,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13" fill="#34d399">Winner: candidate A → published</text>
+<text x="916" y="549" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="11" fill="#9097a4">with its tests and meta.selection</text>
+</g>
+<rect class="s46" x="258" y="138" width="204" height="84" rx="13" fill="none" stroke="#34d399" stroke-width="2"/>
+<text x="48" y="540" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="12" fill="#9097a4">Measured on the practice suite (5 cases, 13 hidden tests): one build scored 0.65 to 0.96.</text>
+<text x="48" y="558" font-family="Inter,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="12" fill="#9097a4">Best-of-3 scored 0.90 to 0.96 and met all 5 cases in each run. See docs/SELECTION.md.</text>
+</svg>

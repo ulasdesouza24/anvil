@@ -79,14 +79,14 @@
   <text x="72" y="346" class="sans" font-size="17" fill="#9097a4">improved by its own critic, and served as an API and an MCP tool.</text>
 
   <g class="mono" font-size="13">
-    <rect x="72" y="374" width="150" height="30" rx="15" fill="#161920" stroke="#2e3340"/>
-    <circle cx="90" cy="389" r="4" fill="#fbbf24"/><text x="102" y="393" fill="#e8eaee">System 1 · Jev</text>
-    <rect x="232" y="374" width="150" height="30" rx="15" fill="#161920" stroke="#2e3340"/>
-    <circle cx="250" cy="389" r="4" fill="#a78bfa"/><text x="262" y="393" fill="#e8eaee">System 2 · GLM</text>
-    <rect x="392" y="374" width="138" height="30" rx="15" fill="#161920" stroke="#2e3340"/>
-    <circle cx="410" cy="389" r="4" fill="#34d399"/><text x="422" y="393" fill="#e8eaee">MCP, 2 ways</text>
-    <rect x="540" y="374" width="128" height="30" rx="15" fill="#161920" stroke="#2e3340"/>
-    <circle cx="558" cy="389" r="4" fill="#f97316"/><text x="570" y="393" fill="#e8eaee">Apache-2.0</text>
+    <rect x="72" y="374" width="242" height="30" rx="15" fill="#161920" stroke="#2e3340"/>
+    <circle cx="90" cy="389" r="4" fill="#fbbf24"/><text x="102" y="393" fill="#e8eaee">System 1: fast decisions</text>
+    <rect x="324" y="374" width="206" height="30" rx="15" fill="#161920" stroke="#2e3340"/>
+    <circle cx="342" cy="389" r="4" fill="#a78bfa"/><text x="354" y="393" fill="#e8eaee">System 2: reasoning</text>
+    <rect x="540" y="374" width="124" height="30" rx="15" fill="#161920" stroke="#2e3340"/>
+    <circle cx="558" cy="389" r="4" fill="#34d399"/><text x="570" y="393" fill="#e8eaee">MCP, 2 ways</text>
+    <rect x="674" y="374" width="118" height="30" rx="15" fill="#161920" stroke="#2e3340"/>
+    <circle cx="692" cy="389" r="4" fill="#f97316"/><text x="704" y="393" fill="#e8eaee">Apache-2.0</text>
   </g>
 
   <!-- A built agent: the request goes in, the graph runs, the tests pass -->
@@ -113,19 +113,19 @@
     <g>
       <rect x="696" y="196" width="110" height="48" rx="10" fill="#111317" stroke="#fbbf24" stroke-opacity="0.7"/>
       <text x="710" y="217" fill="#e8eaee">decision</text>
-      <text x="710" y="233" fill="#fbbf24">S1 · 0.3 s</text>
+      <text x="710" y="233" fill="#fbbf24">System 1</text>
       <circle class="ok k1" cx="794" cy="208" r="5" fill="#34d399"/>
     </g>
     <g>
       <rect x="904" y="126" width="110" height="48" rx="10" fill="#111317" stroke="#a78bfa" stroke-opacity="0.7"/>
       <text x="918" y="147" fill="#e8eaee">extract</text>
-      <text x="918" y="163" fill="#a78bfa" font-size="11">S2 · schema</text>
+      <text x="918" y="163" fill="#a78bfa">System 2</text>
       <circle class="ok k2" cx="1002" cy="138" r="5" fill="#34d399"/>
     </g>
     <g>
       <rect x="904" y="266" width="110" height="48" rx="10" fill="#111317" stroke="#a78bfa" stroke-opacity="0.7"/>
       <text x="918" y="287" fill="#e8eaee">agent</text>
-      <text x="918" y="303" fill="#a78bfa">S2 · tools</text>
+      <text x="918" y="303" fill="#a78bfa">System 2</text>
       <circle class="ok k3" cx="1002" cy="278" r="5" fill="#34d399"/>
     </g>
     <g>
