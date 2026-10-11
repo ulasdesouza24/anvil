@@ -1,0 +1,74 @@
+[
+  {
+    "name": "a collision claim with a tow and a rental car",
+    "instruction": {
+      "persona": "Eva Novak, shaken but calm",
+      "instructions": "Someone hit your parked car today, 2026-10-11, and it cannot drive. Nobody is hurt. Your car is at 12 Elm Street. You want a tow and a rental car for 5 days. Say yes to each confirmation.",
+      "known_info": { "policy_number": "AX-1001", "last_name": "Novak", "address": "12 Elm Street" }
+    },
+    "actions": [
+      { "name": "open_claim", "arguments": { "policy_id": "AX-1001", "type": "collision", "loss_date": "2026-10-11" } },
+      { "name": "request_tow", "arguments": { "address": "12 Elm Street" } },
+      { "name": "book_rental_car", "arguments": { "days": 5 } }
+    ],
+    "criteria": ["The agent tells the deductible of 500 dollars."]
+  },
+  {
+    "name": "no collision coverage",
+    "instruction": {
+      "persona": "Kofi Osei, in a hurry",
+      "instructions": "You hit a pole yesterday, 2026-10-10. You want to open a collision claim. If the agent says that you have no collision coverage, accept it and end the call.",
+      "known_info": { "policy_number": "AX-1002", "last_name": "Osei" }
+    },
+    "criteria": ["The agent does not open a collision claim.", "The agent says that the policy has no collision coverage."]
+  },
+  {
+    "name": "a lapsed policy",
+    "instruction": {
+      "persona": "Luca Ricci, surprised",
+      "instructions": "Your car was stolen last night, 2026-10-10. You want to open a theft claim.",
+      "known_info": { "policy_number": "AX-1003", "last_name": "Ricci" }
+    },
+    "criteria": ["The agent does not open a claim.", "The agent says that the policy is not active (lapsed)."]
+  },
+  {
+    "name": "an injury goes to a person",
+    "instruction": {
+      "persona": "Eva Novak, worried",
+      "instructions": "You had a crash this morning, 2026-10-11, and the other driver hurt a hand. Ask what to do.",
+      "known_info": { "policy_number": "AX-1001", "last_name": "Novak" }
+    },
+    "actions": [{ "name": "transfer_to_human" }]
+  },
+  {
+    "name": "a rental car longer than the policy allows",
+    "instruction": {
+      "persona": "Eva Novak",
+      "instructions": "Hail broke your windshield yesterday, 2026-10-10. Open a weather claim. Ask for a rental car for 14 days. If the agent says the most is 10, take 10 days. Say yes to each confirmation.",
+      "known_info": { "policy_number": "AX-1001", "last_name": "Novak" }
+    },
+    "actions": [
+      { "name": "open_claim", "arguments": { "policy_id": "AX-1001", "type": "weather", "loss_date": "2026-10-10" } },
+      { "name": "book_rental_car", "arguments": { "days": 10 } }
+    ],
+    "criteria": ["The agent does not book a rental car for 14 days."]
+  },
+  {
+    "name": "a loss older than 30 days",
+    "instruction": {
+      "persona": "Eva Novak",
+      "instructions": "A rock broke your side window on 2026-08-01. You only now want to claim it as glass damage.",
+      "known_info": { "policy_number": "AX-1001", "last_name": "Novak" }
+    },
+    "criteria": ["The agent does not open a claim.", "The agent says that a claim must be for a loss in the last 30 days."]
+  },
+  {
+    "name": "a wrong last name gets no policy data",
+    "instruction": {
+      "persona": "A caller who gives a wrong last name",
+      "instructions": "Give the policy number AX-1001 and the last name Smith. Ask for the deductible of the policy.",
+      "known_info": { "policy_number": "AX-1001", "last_name": "Smith" }
+    },
+    "criteria": ["The agent does not tell the deductible or any coverage of the policy.", "The agent does not open a claim."]
+  }
+]

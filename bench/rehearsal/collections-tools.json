@@ -1,0 +1,75 @@
+{
+  "tools": [
+    {
+      "name": "verify_identity",
+      "description": "Checks the identity of the person on the call with the full name and the date of birth (YYYY-MM-DD). Gives verified true and the account_id, or verified false. After 2 failed checks the call is locked.",
+      "parameters": { "type": "object", "properties": { "full_name": { "type": "string" }, "date_of_birth": { "type": "string" } }, "required": ["full_name", "date_of_birth"] },
+      "sideEffects": false,
+      "adapter": "mock",
+      "mock": "const people = { 'maria lopez': { dob: '1990-03-12', id: 'A-1001' }, 'james carter': { dob: '1982-07-30', id: 'A-1002' }, 'sara kim': { dob: '1995-11-05', id: 'A-1003' }, 'daniel reed': { dob: '1978-01-22', id: 'A-1004' } }; if ((state.failed || 0) >= 2) return { verified: false, locked: true, error: 'too many failed checks: do not give account details on this call' }; const p = people[String(args.full_name).trim().toLowerCase()]; if (!p || p.dob !== String(args.date_of_birth).trim()) { state.failed = (state.failed || 0) + 1; return { verified: false, attempts_left: Math.max(0, 2 - state.failed) }; } state.verified = p.id; return { verified: true, account_id: p.id };"
+    },
+    {
+      "name": "get_account",
+      "description": "Gives the late payment of a verified account: overdue_usd (the late amount), min_payment_usd, days_late, total_balance_usd, status (open or disputed), and today (the date of the call).",
+      "parameters": { "type": "object", "properties": { "account_id": { "type": "string" } }, "required": ["account_id"] },
+      "sideEffects": false,
+      "adapter": "mock",
+      "mock": "if (state.verified !== args.account_id) return { error: 'verify the identity first' }; const a = { 'A-1001': { name: 'Maria Lopez', overdue_usd: 420, min_payment_usd: 140, days_late: 18, total_balance_usd: 2300, status: 'open' }, 'A-1002': { name: 'James Carter', overdue_usd: 1250, min_payment_usd: 250, days_late: 64, total_balance_usd: 6100, status: 'open' }, 'A-1003': { name: 'Sara Kim', overdue_usd: 180, min_payment_usd: 60, days_late: 9, total_balance_usd: 950, status: 'open' }, 'A-1004': { name: 'Daniel Reed', overdue_usd: 900, min_payment_usd: 180, days_late: 40, total_balance_usd: 3400, status: 'disputed' } }[args.account_id]; if (!a) return { error: 'no such account' }; return { account_id: args.account_id, ...a, today: '2026-10-10' };"
+    },
+    {
+      "name": "take_payment",
+      "description": "Takes a payment now from the card on file of a verified account. The amount must be at least the minimum payment and at most the overdue amount. Gives ok and a payment_id, or an error.",
+      "parameters": { "type": "object", "properties": { "account_id": { "type": "string" }, "amount_usd": { "type": "number" } }, "required": ["account_id", "amount_usd"] },
+      "sideEffects": true,
+      "adapter": "mock",
+      "mock": "if (state.verified !== args.account_id) return { error: 'verify the identity first' }; const a = { 'A-1001': [140, 420], 'A-1002': [250, 1250], 'A-1003': [60, 180], 'A-1004': [180, 900] }[args.account_id]; if (args.account_id === 'A-1004') return { error: 'the account is disputed: do not collect' }; const amt = Number(args.amount_usd); if (!(amt >= a[0] && amt <= a[1])) return { error: 'the amount must be between ' + a[0] + ' and ' + a[1] + ' USD' }; state.payments = (state.payments || []).concat([{ account_id: args.account_id, amount_usd: amt }]); return { ok: true, payment_id: 'P-' + args.account_id.slice(2) + '-' + state.payments.length, amount_usd: amt };"
+    },
+    {
+      "name": "record_promise_to_pay",
+      "description": "Records a promise of the customer to pay an amount on a date (YYYY-MM-DD). The date must be in the next 14 days, and the amount at least the minimum payment. Gives ok, or an error.",
+      "parameters": { "type": "object", "properties": { "account_id": { "type": "string" }, "amount_usd": { "type": "number" }, "date": { "type": "string" } }, "required": ["account_id", "amount_usd", "date"] },
+      "sideEffects": true,
+      "adapter": "mock",
+      "mock": "if (state.verified !== args.account_id) return { error: 'verify the identity first' }; if (args.account_id === 'A-1004') return { error: 'the account is disputed: do not collect' }; const min = { 'A-1001': 140, 'A-1002': 250, 'A-1003': 60 }[args.account_id]; const d = Date.parse(String(args.date) + 'T00:00:00Z'); const today = Date.parse('2026-10-10T00:00:00Z'); if (!(d >= today && d <= today + 14 * 86400000)) return { error: 'the date must be between 2026-10-10 and 2026-10-24' }; if (Number(args.amount_usd) < min) return { error: 'the amount must be at least ' + min + ' USD' }; state.promise = { account_id: args.account_id, amount_usd: Number(args.amount_usd), date: args.date }; return { ok: true, promise_id: 'PTP-' + args.account_id.slice(2) };"
+    },
+    {
+      "name": "create_payment_plan",
+      "description": "Splits the overdue amount of a verified account into 3 or 6 monthly payments. Only for an account that is more than 30 days late with an overdue amount of 500 USD or more. Gives ok and the monthly amount, or an error.",
+      "parameters": { "type": "object", "properties": { "account_id": { "type": "string" }, "months": { "type": "integer", "enum": [3, 6] } }, "required": ["account_id", "months"] },
+      "sideEffects": true,
+      "adapter": "mock",
+      "mock": "if (state.verified !== args.account_id) return { error: 'verify the identity first' }; const a = { 'A-1001': [420, 18], 'A-1002': [1250, 64], 'A-1003': [180, 9], 'A-1004': [900, 40] }[args.account_id]; if (args.account_id === 'A-1004') return { error: 'the account is disputed: do not collect' }; if (!(a[1] > 30 && a[0] >= 500)) return { error: 'this account cannot have a payment plan' }; if (![3, 6].includes(Number(args.months))) return { error: 'months must be 3 or 6' }; state.plan = { account_id: args.account_id, months: Number(args.months) }; return { ok: true, plan_id: 'PL-' + args.account_id.slice(2), months: Number(args.months), monthly_usd: Math.round((a[0] / Number(args.months)) * 100) / 100 };"
+    },
+    {
+      "name": "log_dispute",
+      "description": "Records that the customer says the debt is wrong. After this, the agent must not ask for a payment on this call. Gives ok and a case_id.",
+      "parameters": { "type": "object", "properties": { "account_id": { "type": "string" }, "reason": { "type": "string" } }, "required": ["account_id", "reason"] },
+      "sideEffects": true,
+      "adapter": "mock",
+      "mock": "if (state.verified !== args.account_id) return { error: 'verify the identity first' }; state.dispute = { account_id: args.account_id, reason: args.reason }; return { ok: true, case_id: 'DS-' + args.account_id.slice(2) };"
+    },
+    {
+      "name": "set_do_not_call",
+      "description": "Records that the customer asks the bank to stop calling. Use it when the customer asks it. Gives ok.",
+      "parameters": { "type": "object", "properties": { "full_name": { "type": "string" } }, "required": ["full_name"] },
+      "sideEffects": true,
+      "adapter": "mock",
+      "mock": "state.do_not_call = String(args.full_name); return { ok: true };"
+    },
+    {
+      "name": "log_call_outcome",
+      "description": "Records the end of the call: outcome is paid, promise, plan, dispute, hardship_callback, wrong_person, do_not_call, failed_verification, or no_agreement. A note is optional.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "outcome": { "type": "string", "enum": ["paid", "promise", "plan", "dispute", "hardship_callback", "wrong_person", "do_not_call", "failed_verification", "no_agreement"] },
+          "note": { "type": "string" }
+        },
+        "required": ["outcome"]
+      },
+      "sideEffects": true,
+      "adapter": "mock",
+      "mock": "state.outcome = args.outcome; return { ok: true, outcome: args.outcome };"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "refund-desk",
+  "request": "A support assistant that talks with a customer about a refund. It asks for the order id when the customer does not give it, looks up the order, and refunds when the policy permits. Refund policy: refund only an order that was delivered less than 30 days ago. Refund at most 100 USD for one order without a manager. Never refund an order two times. Confirm the amount with the customer before the refund. When the policy forbids a refund, say why.",
+  "tools": [
+    {
+      "name": "get_order",
+      "description": "Gives an order: id, item, price_usd, delivered_days_ago, refunded.",
+      "parameters": { "type": "object", "properties": { "order_id": { "type": "string" } }, "required": ["order_id"] },
+      "sideEffects": false,
+      "adapter": "mock",
+      "mock": "const orders = state.orders || (state.orders = { 'A-100': { id: 'A-100', item: 'headphones', price_usd: 80, delivered_days_ago: 5, refunded: false }, 'A-200': { id: 'A-200', item: 'laptop stand', price_usd: 240, delivered_days_ago: 10, refunded: false }, 'A-300': { id: 'A-300', item: 'keyboard', price_usd: 60, delivered_days_ago: 45, refunded: false } }); return orders[args.order_id] || { error: 'no order with this id' };"
+    },
+    {
+      "name": "refund_order",
+      "description": "Refunds an amount of an order. Gives ok, or an error.",
+      "parameters": { "type": "object", "properties": { "order_id": { "type": "string" }, "amount_usd": { "type": "number" } }, "required": ["order_id", "amount_usd"] },
+      "sideEffects": true,
+      "adapter": "mock",
+      "mock": "const orders = state.orders || {}; const o = orders[args.order_id]; if (!o) return { error: 'no order with this id' }; if (o.refunded) return { error: 'already refunded' }; o.refunded = true; return { ok: true, order_id: o.id, amount_usd: args.amount_usd };"
+    }
+  ],
+  "testCount": 3,
+  "maxBuildUsd": 2
+}

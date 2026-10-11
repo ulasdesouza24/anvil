@@ -1,0 +1,2382 @@
+{
+  "id": "job-posting-analyzer",
+  "name": "Job Posting Analyzer",
+  "description": "Parses a raw job posting into a structured summary with skills, salary, remote policy, red flags, and an attractiveness score for a senior engineer.",
+  "createdAt": 1790529489744,
+  "updatedAt": 1790530909675,
+  "currentVersion": 2,
+  "versions": [
+    {
+      "version": 1,
+      "spec": {
+        "specVersion": "anvil/v1",
+        "id": "job-posting-analyzer",
+        "name": "Job Posting Analyzer",
+        "description": "Parses a raw job posting into a structured summary with skills, salary, remote policy, red flags, and an attractiveness score for a senior engineer.",
+        "version": 1,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "posting_text": {
+              "type": "string",
+              "description": "Raw text of the job posting (may include title, description, requirements, benefits, salary info)."
+            },
+            "candidate_profile": {
+              "type": "string",
+              "description": "Optional short description of the evaluating candidate's background to tailor the attractiveness score (defaults to a generic senior software engineer)."
+            }
+          },
+          "required": [
+            "posting_text"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "structured_summary": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "seniority": {
+                  "type": "string",
+                  "enum": [
+                    "junior",
+                    "mid",
+                    "senior",
+                    "staff",
+                    "principal",
+                    "unknown"
+                  ]
+                },
+                "must_have_skills": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "nice_to_have_skills": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "salary_range": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "min": {
+                      "type": "number"
+                    },
+                    "max": {
+                      "type": "number"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "period": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "remote_policy": {
+                  "type": "string",
+                  "enum": [
+                    "remote",
+                    "hybrid",
+                    "onsite",
+                    "unclear"
+                  ]
+                },
+                "red_flags": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "flag": {
+                        "type": "string"
+                      },
+                      "evidence": {
+                        "type": "string"
+                      },
+                      "severity": {
+                        "type": "string",
+                        "enum": [
+                          "low",
+                          "medium",
+                          "high"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "flag",
+                      "evidence",
+                      "severity"
+                    ]
+                  }
+                },
+                "attractiveness_score": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10
+                },
+                "score_rationale": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "title",
+                "seniority",
+                "must_have_skills",
+                "nice_to_have_skills",
+                "salary_range",
+                "remote_policy",
+                "red_flags",
+                "attractiveness_score",
+                "score_rationale"
+              ]
+            }
+          }
+        },
+        "nodes": [
+          {
+            "id": "input",
+            "type": "input",
+            "name": "Input",
+            "config": {}
+          },
+          {
+            "id": "normalize",
+            "type": "code",
+            "name": "Normalize posting text",
+            "description": "Strip HTML tags and boilerplate, collapse whitespace, and detect if the text is too short/garbled to analyze.",
+            "config": {
+              "code": "let text = String(input.posting_text || '');\ntext = text.replace(/<script[\\s\\S]*?<\\/script>/gi, ' ').replace(/<style[\\s\\S]*?<\\/style>/gi, ' ').replace(/<[^>]+>/g, ' ');\ntext = text.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');\ntext = text.replace(/\\s+/g, ' ').trim();\nreturn { text: text, too_short: text.length < 40 };",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "too_short": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "text",
+                  "too_short"
+                ]
+              }
+            }
+          },
+          {
+            "id": "extract",
+            "type": "llm_structured",
+            "name": "Extract structured fields",
+            "description": "Extract title, seniority, skills split, salary, remote policy, and red flags with verbatim evidence from the normalized posting.",
+            "config": {
+              "system": "You are a meticulous job-posting analyst. Use ONLY the information present in the posting text — never invent salary figures, skills, or quotes. Do not infer protected-class or demographic information. Output only what the schema requires.",
+              "prompt": "Analyze this job posting text:\n\n{{nodes.normalize.output.text}}\n\nRules:\n- seniority: infer from title keywords AND years-of-experience requirements; use \"unknown\" if signals conflict or are absent.\n- must_have_skills vs nice_to_have_skills: split by cue words ('required', 'must' vs 'preferred', 'plus', 'nice to have'); default to must-have when ambiguous. Short skill strings only (e.g. \"Go\", \"Kubernetes\"), never full sentences. Lists must be disjoint.\n- salary_range: report ONLY figures stated in the text (min, max, currency, period). Default currency to USD when a $ symbol or US location is present but no currency is stated. Use null if no concrete pay figure appears. If the posting says 'competitive salary' or similar without figures, add a red flag for vague pay.\n- remote_policy: one of remote | hybrid | onsite | unclear, based on explicit statements and location requirements.\n- red_flags: scan for unrealistic requirement stacks (e.g. 10+ years for a mid role, 5+ unrelated specializations), vague or missing pay, toxic phrasing ('rockstar', 'work hard play hard', 'wear many hats', 'ninja'), unpaid overtime hints, 24/7 or weekend on-call without compensation, and bait-and-switch signals (e.g. entry level but demanding years of experience). EVERY red flag must include 'evidence' as a verbatim or near-verbatim quote from the posting, and a severity of low, medium, or high.\n- If the text is too short or garbled to analyze (too_short = {{nodes.normalize.output.too_short}}), return 'unknown' values, empty skill lists, salary_range null, and one red flag noting insufficient information.\n\nReturn a single JSON object matching the schema, no extra prose.",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "seniority": {
+                    "type": "string",
+                    "enum": [
+                      "junior",
+                      "mid",
+                      "senior",
+                      "staff",
+                      "principal",
+                      "unknown"
+                    ]
+                  },
+                  "must_have_skills": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "nice_to_have_skills": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "salary_range": {
+                    "type": [
+                      "object",
+                      "null"
+                    ],
+                    "properties": {
+                      "min": {
+                        "type": "number"
+                      },
+                      "max": {
+                        "type": "number"
+                      },
+                      "currency": {
+                        "type": "string"
+                      },
+                      "period": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "remote_policy": {
+                    "type": "string",
+                    "enum": [
+                      "remote",
+                      "hybrid",
+                      "onsite",
+                      "unclear"
+                    ]
+                  },
+                  "red_flags": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "flag": {
+                          "type": "string"
+                        },
+                        "evidence": {
+                          "type": "string"
+                        },
+                        "severity": {
+                          "type": "string",
+                          "enum": [
+                            "low",
+                            "medium",
+                            "high"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "flag",
+                        "evidence",
+                        "severity"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "title",
+                  "seniority",
+                  "must_have_skills",
+                  "nice_to_have_skills",
+                  "salary_range",
+                  "remote_policy",
+                  "red_flags"
+                ]
+              },
+              "model": "fast",
+              "temperature": 0.1
+            }
+          },
+          {
+            "id": "score",
+            "type": "llm_structured",
+            "name": "Score attractiveness",
+            "description": "Compute a 1-10 attractiveness score and one-paragraph rationale for the candidate profile, weighted on skills fit, salary transparency, remote policy, and red-flag severity.",
+            "config": {
+              "system": "You are a pragmatic career advisor assessing job postings for a candidate. Be honest and calibrated; do not inflate scores. Base your assessment only on the provided extraction and posting content.",
+              "prompt": "Candidate profile: {{input.candidate_profile ?? 'generic senior software engineer'}}\n\nExtracted posting analysis:\n{{nodes.extract.output | json}}\n\nCompute:\n- attractiveness_score: an integer 1-10 (10 = exceptional fit, 1 = strong avoid), weighted on skills fit vs the candidate profile, salary transparency, remote policy, and red-flag severity (high-severity red flags should pull the score down substantially).\n- score_rationale: one paragraph that cites at least one specific positive factor and at least one specific negative factor drawn from the posting/extraction.\n\nReturn only the JSON object.",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "attractiveness_score": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10
+                  },
+                  "score_rationale": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "attractiveness_score",
+                  "score_rationale"
+                ]
+              },
+              "model": "balanced",
+              "temperature": 0.2
+            }
+          },
+          {
+            "id": "assemble",
+            "type": "transform",
+            "name": "Assemble structured summary",
+            "description": "Combine extraction and scoring into the final structured_summary object with the score clamped to an integer 1-10.",
+            "config": {
+              "value": {
+                "structured_summary": {
+                  "title": "{{nodes.extract.output.title}}",
+                  "seniority": "{{nodes.extract.output.seniority}}",
+                  "must_have_skills": "{{nodes.extract.output.must_have_skills}}",
+                  "nice_to_have_skills": "{{nodes.extract.output.nice_to_have_skills}}",
+                  "salary_range": "{{nodes.extract.output.salary_range}}",
+                  "remote_policy": "{{nodes.extract.output.remote_policy}}",
+                  "red_flags": "{{nodes.extract.output.red_flags}}",
+                  "attractiveness_score": "{{nodes.score.output.attractiveness_score | number}}",
+                  "score_rationale": "{{nodes.score.output.score_rationale}}"
+                }
+              },
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "structured_summary": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "seniority": {
+                        "type": "string"
+                      },
+                      "must_have_skills": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "nice_to_have_skills": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "salary_range": {},
+                      "remote_policy": {
+                        "type": "string"
+                      },
+                      "red_flags": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "flag": {
+                              "type": "string"
+                            },
+                            "evidence": {
+                              "type": "string"
+                            },
+                            "severity": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "attractiveness_score": {
+                        "type": "integer"
+                      },
+                      "score_rationale": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "title",
+                      "seniority",
+                      "must_have_skills",
+                      "nice_to_have_skills",
+                      "salary_range",
+                      "remote_policy",
+                      "red_flags",
+                      "attractiveness_score",
+                      "score_rationale"
+                    ]
+                  }
+                },
+                "required": [
+                  "structured_summary"
+                ]
+              }
+            }
+          },
+          {
+            "id": "output",
+            "type": "output",
+            "name": "Output",
+            "config": {
+              "value": {
+                "structured_summary": "{{nodes.assemble.output.structured_summary}}"
+              }
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "input",
+            "to": "normalize"
+          },
+          {
+            "from": "normalize",
+            "to": "extract"
+          },
+          {
+            "from": "extract",
+            "to": "score"
+          },
+          {
+            "from": "extract",
+            "to": "assemble"
+          },
+          {
+            "from": "score",
+            "to": "assemble"
+          },
+          {
+            "from": "assemble",
+            "to": "output"
+          }
+        ],
+        "policy": {
+          "maxCostUsd": 0.5,
+          "maxNodeExecutions": 500,
+          "timeoutMs": 600000,
+          "requireApprovalForSideEffects": false
+        },
+        "tests": [
+          {
+            "id": "t1",
+            "name": "typical_remote_backend_posting",
+            "input": {
+              "posting_text": "Senior Backend Engineer (Remote, US). We need 5+ years with Go and Kubernetes to build our payments platform. Salary: $180k-$220k + equity. Flexible hours, async-first culture. Nice to have: Terraform, AWS.",
+              "candidate_profile": "Senior backend engineer, 8 years Go/Kubernetes, prefers remote."
+            },
+            "criteria": [
+              "Output is valid JSON with all nine declared fields present under structured_summary.",
+              "remote_policy equals 'remote' and is consistent with the '(Remote, US)' language in the posting.",
+              "salary_range reflects the $180k-$220k figure stated in the posting.",
+              "attractiveness_score is an integer 1-10 and score_rationale cites at least one specific positive and one specific negative factor from the posting."
+            ],
+            "checks": [
+              {
+                "path": "structured_summary.remote_policy",
+                "op": "equals",
+                "value": "remote"
+              },
+              {
+                "path": "structured_summary.salary_range",
+                "op": "contains",
+                "value": "180"
+              },
+              {
+                "path": "structured_summary.attractiveness_score",
+                "op": "type",
+                "value": "integer"
+              },
+              {
+                "path": "structured_summary.score_rationale",
+                "op": "minLength",
+                "value": 20
+              }
+            ]
+          },
+          {
+            "id": "t2",
+            "name": "edge_hybrid_staff_with_missing_fields",
+            "input": {
+              "posting_text": "Staff Engineer, Platform. Hybrid (3 days/week, Austin TX). Lead our observability team. 8+ years distributed systems, deep Kubernetes expertise required. Great 401k match. We also value mentorship and a growth mindset.",
+              "candidate_profile": "Staff-level distributed systems engineer, based in Denver, prefers fully remote."
+            },
+            "criteria": [
+              "salary_range is null exactly because no concrete pay figure appears in the posting.",
+              "remote_policy is 'hybrid', consistent with the 'Hybrid (3 days/week, Austin TX)' language.",
+              "must_have_skills and nice_to_have_skills are disjoint lists of short skill strings (no full sentences).",
+              "Every red flag entry has non-empty 'flag', 'evidence', and 'severity' fields, with evidence traceable to the posting text."
+            ],
+            "checks": [
+              {
+                "path": "structured_summary.salary_range",
+                "op": "equals",
+                "value": null
+              },
+              {
+                "path": "structured_summary.remote_policy",
+                "op": "equals",
+                "value": "hybrid"
+              },
+              {
+                "path": "structured_summary.red_flags",
+                "op": "type",
+                "value": "array"
+              }
+            ]
+          },
+          {
+            "id": "t3",
+            "name": "tricky_adversarial_rockstar_posting",
+            "input": {
+              "posting_text": "Rockstar Full-Stack Ninja needed! Must know React, Angular, Vue, Node, Python, Java, Kotlin, Swift, AWS, Azure, GCP. 2 years experience. Competitive salary. Work hard play hard! On-site 6 days/week in downtown SF. We're a family! No whiners. This role may also involve occasional janitorial duties."
+            },
+            "criteria": [
+              "salary_range is null because 'competitive salary' contains no concrete figures, and a red flag is present citing the 'competitive salary' language.",
+              "remote_policy is 'onsite', consistent with 'On-site 6 days/week in downtown SF'.",
+              "Red flags capture at least two of: unrealistic skill breadth vs 2 years experience, 'competitive salary' with no figures, 6-day on-site week, 'family'/'no whiners' culture language, or janitorial duties.",
+              "attractiveness_score is a low integer (1-5) and score_rationale references specific negative factors from the posting."
+            ],
+            "checks": [
+              {
+                "path": "structured_summary.salary_range",
+                "op": "equals",
+                "value": null
+              },
+              {
+                "path": "structured_summary.remote_policy",
+                "op": "equals",
+                "value": "onsite"
+              },
+              {
+                "path": "structured_summary.red_flags",
+                "op": "minLength",
+                "value": 2
+              },
+              {
+                "path": "structured_summary.attractiveness_score",
+                "op": "matches",
+                "value": "^[1-5]$"
+              }
+            ]
+          }
+        ],
+        "meta": {
+          "builtBy": "anvil-builder",
+          "request": "An agent that takes a raw job posting text and produces a structured summary: title, seniority level, must-have skills, nice-to-have skills, salary range if mentioned, remote policy, plus a red-flags list (unrealistic requirements, vague pay, toxic phrasing) and a 1-10 attractiveness score for a senior engineer.",
+          "taskSpec": {
+            "name": "Job Posting Analyzer",
+            "agentId": "job-posting-analyzer",
+            "summary": "Parses a raw job posting into a structured summary with skills, salary, remote policy, red flags, and an attractiveness score for a senior engineer.",
+            "goal": "Turn unstructured job posting text into a consistent, structured assessment that a senior engineer can use to quickly decide whether to apply.",
+            "inputs": [
+              {
+                "name": "posting_text",
+                "type": "string",
+                "description": "Raw text of the job posting (may include title, description, requirements, benefits, salary info).",
+                "required": true,
+                "example": "Senior Backend Engineer - We're looking for a rockstar ninja with 10+ years of Go, Kubernetes, and React... Competitive salary. Must be available on-call 24/7."
+              },
+              {
+                "name": "candidate_profile",
+                "type": "string",
+                "description": "Optional short description of the evaluating candidate's background to tailor the attractiveness score (defaults to a generic senior software engineer).",
+                "required": false,
+                "example": "Senior backend engineer, 8 years Go/Kubernetes, prefers remote, dislikes on-call."
+              }
+            ],
+            "outputs": [
+              {
+                "name": "structured_summary",
+                "type": "object",
+                "description": "Object with fields: title (string), seniority (string: junior|mid|senior|staff|principal|unknown), must_have_skills (array of strings), nice_to_have_skills (array of strings), salary_range (object with min, max, currency, period, or null if not mentioned), remote_policy (string: remote|hybrid|onsite|unclear), red_flags (array of {flag, evidence, severity: low|medium|high}), attractiveness_score (integer 1-10), score_rationale (string)."
+              }
+            ],
+            "steps": [
+              "Normalize the raw posting text (strip HTML/boilerplate, collapse whitespace).",
+              "Extract the job title and infer seniority level from title and description language.",
+              "Split listed requirements into must-have vs nice-to-have skills using cue words ('required', 'must' vs 'preferred', 'plus', 'nice to have'); default to must-have when ambiguous.",
+              "Detect salary information (ranges, single figures, equity/bonus mentions); record null with a red flag if pay is vague or absent while the posting claims 'competitive salary'.",
+              "Classify remote policy as remote, hybrid, onsite, or unclear based on explicit statements and location requirements.",
+              "Scan for red flags: unrealistic requirement stacks (e.g., 10+ years for a mid role, 5+ unrelated specializations), vague or missing pay, toxic phrasing ('rockstar', 'work hard play hard', 'wear many hats', unpaid overtime hints, 24/7 on-call without compensation), and bait-and-switch signals.",
+              "Compute a 1-10 attractiveness score for the candidate profile (default: generic senior engineer), weighting skills fit, salary transparency, remote policy, and red-flag severity.",
+              "Emit the structured_summary object with a one-paragraph score rationale citing the strongest positive and negative factors."
+            ],
+            "constraints": [
+              "Never invent salary figures; only report what the text states, using null otherwise.",
+              "Every red flag must include a verbatim or near-verbatim quote from the posting as evidence.",
+              "attractiveness_score must be an integer 1-10; 10 = exceptional fit, 1 = strong avoid.",
+              "If the posting text is too short or garbled to analyze, return the structure with 'unknown' values and a red flag noting insufficient information rather than failing.",
+              "Do not infer protected-class or demographic information; assess the posting content only.",
+              "Output must be a single JSON object matching the declared schema, no extra prose."
+            ],
+            "successCriteria": [
+              "Output is valid JSON with all declared fields present (title, seniority, must_have_skills, nice_to_have_skills, salary_range, remote_policy, red_flags, attractiveness_score, score_rationale).",
+              "Every red flag entry contains non-empty 'flag', 'evidence', and 'severity' fields, and evidence text appears in (or is a close paraphrase of) the input posting.",
+              "salary_range is null exactly when no concrete pay figure appears in the posting; if 'competitive salary' appears without figures, a red flag is present.",
+              "remote_policy is one of the four allowed values and is consistent with location/on-site language in the posting.",
+              "attractiveness_score is an integer between 1 and 10, and score_rationale references at least one specific positive and one specific negative factor from the posting.",
+              "must_have and nice_to_have skills are disjoint lists of short skill strings (no full sentences)."
+            ],
+            "assumptions": [
+              "Default evaluation persona is a generic senior software engineer when candidate_profile is omitted.",
+              "Salary figures default to USD when a currency is not stated but a $ symbol or US location is present.",
+              "Seniority is inferred from both title keywords and years-of-experience requirements; 'unknown' is acceptable when signals conflict.",
+              "Single-language (English) postings; no translation needed.",
+              "No web lookup is performed; analysis is based solely on provided text.",
+              "One posting per invocation; batch processing is out of scope."
+            ],
+            "clarifyingQuestions": [],
+            "exampleInputs": [
+              {
+                "posting_text": "Senior Backend Engineer (Remote, US). We need 5+ years with Go and Kubernetes to build our payments platform. Salary: $180k-$220k + equity. Flexible hours, async-first culture. Nice to have: Terraform, AWS.",
+                "candidate_profile": "Senior backend engineer, 8 years Go/Kubernetes, prefers remote."
+              },
+              {
+                "posting_text": "Rockstar Full-Stack Ninja needed! Must know React, Angular, Vue, Node, Python, Java, Kotlin, Swift, AWS, Azure, GCP. 2 years experience. Competitive salary. Work hard play hard! On-site 6 days/week in downtown SF."
+              },
+              {
+                "posting_text": "Staff Engineer, Platform. Hybrid (3 days/week, Austin TX). Lead our observability team. 8+ years distributed systems, deep Kubernetes expertise required. Compensation: $210,000 base + 15% bonus. Great 401k match."
+              },
+              {
+                "posting_text": "Junior-ish Developer (we'll train you!) - entry level but must have 7 years commercial React experience. Pay: DOE. Must be available weekends. Fast-paced environment, wear many hats!"
+              }
+            ]
+          },
+          "plan": {
+            "pattern": "pipeline",
+            "rationale": "Fixed deterministic sequence: clean text → structured extraction (skills/salary/remote/red flags) → scoring with rationale → assemble final object. No branching, lists, web, or human steps needed; llm_structured guarantees schema-valid fields and code handles normalization exactly.",
+            "steps": [
+              {
+                "id": "normalize",
+                "type": "code",
+                "purpose": "Strip HTML tags/boilerplate and collapse whitespace from {{input.posting_text}}; also detect if the text is too short/garbled (< ~40 chars) to analyze.",
+                "dependsOn": [
+                  "input"
+                ]
+              },
+              {
+                "id": "extract",
+                "type": "llm_structured",
+                "purpose": "Extract from the normalized text: title, seniority (junior|mid|senior|staff|principal|unknown), must_have_skills vs nice_to_have_skills split by cue words (default must-have when ambiguous), salary_range (min/max/currency/period or null — never invented, flag 'competitive salary' with no figures), remote_policy (remote|hybrid|onsite|unclear), and red_flags array of {flag, evidence (verbatim quote), severity (low|medium|high)} covering unrealistic stacks, vague pay, toxic phrasing, on-call without compensation, bait-and-switch. If text is too short, return unknown values plus an insufficient-information red flag.",
+                "dependsOn": [
+                  "normalize"
+                ],
+                "model": "fast"
+              },
+              {
+                "id": "score",
+                "type": "llm_structured",
+                "purpose": "Compute attractiveness_score (integer 1-10) and score_rationale (one paragraph citing at least one specific positive and one specific negative factor), weighted on skills fit vs the candidate profile ({{input.candidate_profile ?? 'generic senior software engineer'}}), salary transparency, remote policy, and red-flag severity.",
+                "dependsOn": [
+                  "extract"
+                ],
+                "model": "balanced"
+              },
+              {
+                "id": "assemble",
+                "type": "transform",
+                "purpose": "Combine extract and score outputs into the single structured_summary object with all nine declared fields; clamp attractiveness_score to integer 1-10.",
+                "dependsOn": [
+                  "extract",
+                  "score"
+                ]
+              }
+            ],
+            "output": "structured_summary: object from assemble — title, seniority, must_have_skills, nice_to_have_skills, salary_range (or null), remote_policy, red_flags from extract; attractiveness_score and score_rationale from score."
+          },
+          "pattern": "pipeline",
+          "compile": [
+            {
+              "attempt": 0,
+              "strategy": "autofix",
+              "errors": 0,
+              "warnings": 0
+            }
+          ],
+          "evolution": [
+            {
+              "round": 0,
+              "score": 0.922,
+              "passRate": 0.667,
+              "accepted": true,
+              "change": "initial build"
+            },
+            {
+              "round": 1,
+              "score": 0.248,
+              "passRate": 0,
+              "accepted": false,
+              "change": "Change node `assemble` from type `transform` to type `code`.; Replace its config with JavaScript that reads nodes.extract.output and nodes.score.output directly (no string templates), clamps attractiveness_score via Math.round/Math.min/Math.max to an integer 1-10, and returns { structured_summary: ... }.; Keep the declared schema so downstream `output` can still reference {{nodes.assemble.output.structured_summary}}; update the node description."
+            },
+            {
+              "round": 2,
+              "score": 0.923,
+              "passRate": 0.667,
+              "accepted": false,
+              "change": "Replaced the `assemble` transform node with a `code` node that assembles the structured_summary in JavaScript.; The code node explicitly coerces the score with Number(), rounds with Math.round, and clamps to [1, 10] so attractiveness_score is always a genuine integer.; Also defensively defaults skill/red-flag lists to empty arrays and salary_range to null so the assembled object always satisfies the required fields.; Declared the same JSON schema on the code node so the downstream output node can still reference `nodes.assemble.output.structured_summary` as a typed field.; No changes to edges, prompts, or tests were needed — the graph topology and data references remain valid."
+            }
+          ]
+        }
+      },
+      "createdAt": 1790529489744,
+      "note": "built by Anvil",
+      "score": 0.922,
+      "evaluation": {
+        "version": 1,
+        "passRate": 0.667,
+        "score": 0.922,
+        "results": [
+          {
+            "testId": "t1",
+            "name": "typical_remote_backend_posting",
+            "passed": false,
+            "score": 0.806,
+            "output": {
+              "structured_summary": {
+                "title": "Senior Backend Engineer",
+                "seniority": "senior",
+                "must_have_skills": [
+                  "Go",
+                  "Kubernetes"
+                ],
+                "nice_to_have_skills": [
+                  "Terraform",
+                  "AWS"
+                ],
+                "salary_range": {
+                  "min": 180000,
+                  "max": 220000,
+                  "currency": "USD",
+                  "period": "year"
+                },
+                "remote_policy": "remote",
+                "red_flags": [],
+                "attractiveness_score": 9,
+                "score_rationale": "Excellent fit: the posting requires exactly the candidate's core strengths (Go and Kubernetes) at the senior level, offers full remote work matching their preference, and provides a transparent, competitive salary range of $180k–$220k USD with no red flags. The only minor gap is that the candidate's profile doesn't mention the nice-to-have Terraform and AWS skills, which slightly limits an otherwise near-perfect match."
+              }
+            },
+            "criteria": [
+              {
+                "criterion": "Output is valid JSON with all nine declared fields present under structured_summary.",
+                "probability": 0.75,
+                "passed": true
+              },
+              {
+                "criterion": "remote_policy equals 'remote' and is consistent with the '(Remote, US)' language in the posting.",
+                "probability": 0.96,
+                "passed": true
+              },
+              {
+                "criterion": "salary_range reflects the $180k-$220k figure stated in the posting.",
+                "probability": 0.99,
+                "passed": true
+              },
+              {
+                "criterion": "attractiveness_score is an integer 1-10 and score_rationale cites at least one specific positive and one specific negative factor from the posting.",
+                "probability": 0.75,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "structured_summary.remote_policy",
+                  "op": "equals",
+                  "value": "remote"
+                },
+                "passed": true,
+                "actual": "remote"
+              },
+              {
+                "check": {
+                  "path": "structured_summary.salary_range",
+                  "op": "contains",
+                  "value": "180"
+                },
+                "passed": true,
+                "actual": {
+                  "min": 180000,
+                  "max": 220000,
+                  "currency": "USD",
+                  "period": "year"
+                }
+              },
+              {
+                "check": {
+                  "path": "structured_summary.attractiveness_score",
+                  "op": "type",
+                  "value": "integer"
+                },
+                "passed": false,
+                "actual": 9
+              },
+              {
+                "check": {
+                  "path": "structured_summary.score_rationale",
+                  "op": "minLength",
+                  "value": 20
+                },
+                "passed": true,
+                "actual": "Excellent fit: the posting requires exactly the candidate's core strengths (Go and Kubernetes) at the senior level, offers full remote work matching their preference, and provides a transparent, competitive salary range of $180k–$220k USD with no red flags. The only minor gap is that the candidate's…"
+              }
+            ],
+            "runId": "run_ygOrnjxWcBmV",
+            "costUsd": 0.00023735,
+            "durationMs": 3973
+          },
+          {
+            "testId": "t2",
+            "name": "edge_hybrid_staff_with_missing_fields",
+            "passed": true,
+            "score": 0.967,
+            "output": {
+              "structured_summary": {
+                "title": "Staff Engineer, Platform",
+                "seniority": "staff",
+                "must_have_skills": [
+                  "Distributed systems",
+                  "Kubernetes"
+                ],
+                "nice_to_have_skills": [],
+                "salary_range": null,
+                "remote_policy": "hybrid",
+                "red_flags": [
+                  {
+                    "flag": "vague pay",
+                    "evidence": "Great 401k match",
+                    "severity": "medium"
+                  }
+                ],
+                "attractiveness_score": 4,
+                "score_rationale": "The role is a strong skills fit — a Staff Engineer, Platform position requiring distributed systems and Kubernetes matches the candidate's staff-level distributed systems background — but the hybrid remote policy conflicts with the candidate's preference for fully remote work from Denver, and the posting lacks any salary range while offering only vague compensation signals ('Great 401k match'), a medium-severity transparency red flag that further undermines its appeal."
+              }
+            },
+            "criteria": [
+              {
+                "criterion": "salary_range is null exactly because no concrete pay figure appears in the posting.",
+                "probability": 0.93,
+                "passed": true
+              },
+              {
+                "criterion": "remote_policy is 'hybrid', consistent with the 'Hybrid (3 days/week, Austin TX)' language.",
+                "probability": 0.98,
+                "passed": true
+              },
+              {
+                "criterion": "must_have_skills and nice_to_have_skills are disjoint lists of short skill strings (no full sentences).",
+                "probability": 0.97,
+                "passed": true
+              },
+              {
+                "criterion": "Every red flag entry has non-empty 'flag', 'evidence', and 'severity' fields, with evidence traceable to the posting text.",
+                "probability": 0.89,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "structured_summary.salary_range",
+                  "op": "equals",
+                  "value": null
+                },
+                "passed": true,
+                "actual": null
+              },
+              {
+                "check": {
+                  "path": "structured_summary.remote_policy",
+                  "op": "equals",
+                  "value": "hybrid"
+                },
+                "passed": true,
+                "actual": "hybrid"
+              },
+              {
+                "check": {
+                  "path": "structured_summary.red_flags",
+                  "op": "type",
+                  "value": "array"
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "flag": "vague pay",
+                    "evidence": "Great 401k match",
+                    "severity": "medium"
+                  }
+                ]
+              }
+            ],
+            "runId": "run_frSqofP-uXfe",
+            "costUsd": 0.00023545,
+            "durationMs": 6216
+          },
+          {
+            "testId": "t3",
+            "name": "tricky_adversarial_rockstar_posting",
+            "passed": true,
+            "score": 0.992,
+            "output": {
+              "structured_summary": {
+                "title": "Rockstar Full-Stack Ninja",
+                "seniority": "junior",
+                "must_have_skills": [
+                  "React",
+                  "Angular",
+                  "Vue",
+                  "Node",
+                  "Python",
+                  "Java",
+                  "Kotlin",
+                  "Swift",
+                  "AWS",
+                  "Azure",
+                  "GCP"
+                ],
+                "nice_to_have_skills": [],
+                "salary_range": null,
+                "remote_policy": "onsite",
+                "red_flags": [
+                  {
+                    "flag": "unrealistic requirement stack",
+                    "evidence": "Must know React, Angular, Vue, Node, Python, Java, Kotlin, Swift, AWS, Azure, GCP",
+                    "severity": "high"
+                  },
+                  {
+                    "flag": "vague pay",
+                    "evidence": "Competitive salary",
+                    "severity": "medium"
+                  },
+                  {
+                    "flag": "toxic phrasing",
+                    "evidence": "Rockstar Full-Stack Ninja... Work hard play hard! We're a family! No whiners.",
+                    "severity": "medium"
+                  },
+                  {
+                    "flag": "bait-and-switch / experience mismatch",
+                    "evidence": "2 years experience",
+                    "severity": "medium"
+                  },
+                  {
+                    "flag": "onsite 6 days/week",
+                    "evidence": "On-site 6 days/week in downtown SF",
+                    "severity": "high"
+                  },
+                  {
+                    "flag": "scope creep / janitorial duties",
+                    "evidence": "This role may also involve occasional janitorial duties.",
+                    "severity": "medium"
+                  }
+                ],
+                "attractiveness_score": 2,
+                "score_rationale": "The posting is a strong avoid for a senior engineer: it targets a junior profile (2 years experience) with an unrealistic must-have stack spanning React, Angular, Vue, Node, Python, Java, Kotlin, Swift, and all three major clouds, plus high-severity red flags including mandatory on-site work 6 days/week in downtown SF and even 'occasional janitorial duties.' There is no salary transparency ('competitive salary' only), and the toxic 'Rockstar Ninja... No whiners' framing signals poor culture. The only mild positive is that the broad stack suggests genuine full-stack breadth, but the seniority mismatch, culture red flags, and demanding on-site policy far outweigh it."
+              }
+            },
+            "criteria": [
+              {
+                "criterion": "salary_range is null because 'competitive salary' contains no concrete figures, and a red flag is present citing the 'competitive salary' language.",
+                "probability": 0.98,
+                "passed": true
+              },
+              {
+                "criterion": "remote_policy is 'onsite', consistent with 'On-site 6 days/week in downtown SF'.",
+                "probability": 0.99,
+                "passed": true
+              },
+              {
+                "criterion": "Red flags capture at least two of: unrealistic skill breadth vs 2 years experience, 'competitive salary' with no figures, 6-day on-site week, 'family'/'no whiners' culture language, or janitorial duties.",
+                "probability": 0.99,
+                "passed": true
+              },
+              {
+                "criterion": "attractiveness_score is a low integer (1-5) and score_rationale references specific negative factors from the posting.",
+                "probability": 0.98,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "structured_summary.salary_range",
+                  "op": "equals",
+                  "value": null
+                },
+                "passed": true,
+                "actual": null
+              },
+              {
+                "check": {
+                  "path": "structured_summary.remote_policy",
+                  "op": "equals",
+                  "value": "onsite"
+                },
+                "passed": true,
+                "actual": "onsite"
+              },
+              {
+                "check": {
+                  "path": "structured_summary.red_flags",
+                  "op": "minLength",
+                  "value": 2
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "flag": "unrealistic requirement stack",
+                    "evidence": "Must know React, Angular, Vue, Node, Python, Java, Kotlin, Swift, AWS, Azure, GCP",
+                    "severity": "high"
+                  },
+                  {
+                    "flag": "vague pay",
+                    "evidence": "Competitive salary",
+                    "severity": "medium"
+                  },
+                  {
+                    "flag": "toxic phrasing",
+                    "evidence": "Rockstar Full-Stack Ninja... Work hard play hard! We're a family! No whiners.",
+                    "severity": "medium"
+                  },
+                  {
+                    "flag": "bait-and-switch / experience mismatch",
+                    "evidence": "2 years experience",
+                    "severity": "medium"
+                  },
+                  {
+                    "flag": "onsite 6 days/week",
+                    "evidence": "On-site 6 days/week in downtown SF",
+                    "severity": "high"
+                  },
+                  {
+                    "flag": "scope creep / janitorial duties",
+                    "evidence": "This role may also involve occasional janitorial duties.",
+                    "severity": "medium"
+                  }
+                ]
+              },
+              {
+                "check": {
+                  "path": "structured_summary.attractiveness_score",
+                  "op": "matches",
+                  "value": "^[1-5]$"
+                },
+                "passed": true,
+                "actual": 2
+              }
+            ],
+            "runId": "run_FkeogDJj2n4I",
+            "costUsd": 0.00065215,
+            "durationMs": 5383
+          }
+        ],
+        "costUsd": 0.00112495,
+        "at": 1790529437325
+      },
+      "buildRunId": "run_2OYGqjNrLcuk"
+    },
+    {
+      "version": 2,
+      "spec": {
+        "specVersion": "anvil/v1",
+        "id": "job-posting-analyzer",
+        "name": "Job Posting Analyzer",
+        "description": "Parses a raw job posting into a structured summary with skills, salary, remote policy, red flags, and an attractiveness score for a senior engineer.",
+        "version": 2,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "posting_text": {
+              "type": "string",
+              "description": "Raw text of the job posting (may include title, description, requirements, benefits, salary info)."
+            },
+            "candidate_profile": {
+              "type": "string",
+              "description": "Optional short description of the evaluating candidate's background to tailor the attractiveness score (defaults to a generic senior software engineer)."
+            }
+          },
+          "required": [
+            "posting_text"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "structured_summary": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "seniority": {
+                  "type": "string",
+                  "enum": [
+                    "junior",
+                    "mid",
+                    "senior",
+                    "staff",
+                    "principal",
+                    "unknown"
+                  ]
+                },
+                "must_have_skills": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "nice_to_have_skills": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "salary_range": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "min": {
+                      "type": "number"
+                    },
+                    "max": {
+                      "type": "number"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "period": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "remote_policy": {
+                  "type": "string",
+                  "enum": [
+                    "remote",
+                    "hybrid",
+                    "onsite",
+                    "unclear"
+                  ]
+                },
+                "red_flags": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "flag": {
+                        "type": "string"
+                      },
+                      "evidence": {
+                        "type": "string"
+                      },
+                      "severity": {
+                        "type": "string",
+                        "enum": [
+                          "low",
+                          "medium",
+                          "high"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "flag",
+                      "evidence",
+                      "severity"
+                    ]
+                  }
+                },
+                "attractiveness_score": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10
+                },
+                "score_rationale": {
+                  "type": "string"
+                },
+                "language": {
+                  "type": "string",
+                  "description": "ISO 639-1 code (e.g. 'en', 'de') of the detected language of the posting."
+                },
+                "english_translation": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Faithful English translation of the posting when its language is not English; null when the posting is already in English."
+                }
+              },
+              "required": [
+                "title",
+                "seniority",
+                "must_have_skills",
+                "nice_to_have_skills",
+                "salary_range",
+                "remote_policy",
+                "red_flags",
+                "attractiveness_score",
+                "score_rationale",
+                "language",
+                "english_translation"
+              ]
+            }
+          }
+        },
+        "nodes": [
+          {
+            "id": "input",
+            "type": "input",
+            "name": "Input",
+            "config": {}
+          },
+          {
+            "id": "normalize",
+            "type": "code",
+            "name": "Normalize posting text",
+            "description": "Strip HTML tags and boilerplate, collapse whitespace, and detect if the text is too short/garbled to analyze.",
+            "config": {
+              "code": "let text = String(input.posting_text || '');\ntext = text.replace(/<script[\\s\\S]*?<\\/script>/gi, ' ').replace(/<style[\\s\\S]*?<\\/style>/gi, ' ').replace(/<[^>]+>/g, ' ');\ntext = text.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');\ntext = text.replace(/\\s+/g, ' ').trim();\nreturn { text: text, too_short: text.length < 40 };",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "too_short": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "text",
+                  "too_short"
+                ]
+              }
+            }
+          },
+          {
+            "id": "extract",
+            "type": "llm_structured",
+            "name": "Extract structured fields",
+            "description": "Extract title, seniority, skills split, salary, remote policy, and red flags with verbatim evidence from the normalized posting.",
+            "config": {
+              "system": "You are a meticulous job-posting analyst. Use ONLY the information present in the posting text — never invent salary figures, skills, or quotes. Do not infer protected-class or demographic information. Output only what the schema requires.",
+              "prompt": "Analyze this job posting text:\n\n{{nodes.normalize.output.text}}\n\nRules:\n- language: the ISO 639-1 code of the language the posting is written in (e.g. 'en', 'de', 'fr').\n- english_translation: if language is not 'en', provide a faithful, complete English translation of the posting (preserve salary figures, requirements, and tone; do not summarize or omit content). If the posting is already in English, set english_translation to null. Base the translation ONLY on the posting text.\n- seniority: infer from title keywords AND years-of-experience requirements; use \"unknown\" if signals conflict or are absent.\n- must_have_skills vs nice_to_have_skills: split by cue words ('required', 'must' vs 'preferred', 'plus', 'nice to have'); default to must-have when ambiguous. Short skill strings only (e.g. \"Go\", \"Kubernetes\"), never full sentences. Lists must be disjoint.\n- salary_range: report ONLY figures stated in the text (min, max, currency, period). Default currency to USD when a $ symbol or US location is present but no currency is stated. Use null if no concrete pay figure appears. If the posting says 'competitive salary' or similar without figures, add a red flag for vague pay.\n- remote_policy: one of remote | hybrid | onsite | unclear, based on explicit statements and location requirements.\n- red_flags: scan for unrealistic requirement stacks (e.g. 10+ years for a mid role, 5+ unrelated specializations), vague or missing pay, toxic phrasing ('rockstar', 'work hard play hard', 'wear many hats', 'ninja'), unpaid overtime hints, 24/7 or weekend on-call without compensation, and bait-and-switch signals (e.g. entry level but demanding years of experience). EVERY red flag must include 'evidence' as a verbatim or near-verbatim quote from the posting, and a severity of low, medium, or high.\n- If the text is too short or garbled to analyze (too_short = {{nodes.normalize.output.too_short}}), return 'unknown' values, empty skill lists, salary_range null, and one red flag noting insufficient information.\n\nReturn a single JSON object matching the schema, no extra prose.",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "seniority": {
+                    "type": "string",
+                    "enum": [
+                      "junior",
+                      "mid",
+                      "senior",
+                      "staff",
+                      "principal",
+                      "unknown"
+                    ]
+                  },
+                  "must_have_skills": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "nice_to_have_skills": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "salary_range": {
+                    "type": [
+                      "object",
+                      "null"
+                    ],
+                    "properties": {
+                      "min": {
+                        "type": "number"
+                      },
+                      "max": {
+                        "type": "number"
+                      },
+                      "currency": {
+                        "type": "string"
+                      },
+                      "period": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "remote_policy": {
+                    "type": "string",
+                    "enum": [
+                      "remote",
+                      "hybrid",
+                      "onsite",
+                      "unclear"
+                    ]
+                  },
+                  "red_flags": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "flag": {
+                          "type": "string"
+                        },
+                        "evidence": {
+                          "type": "string"
+                        },
+                        "severity": {
+                          "type": "string",
+                          "enum": [
+                            "low",
+                            "medium",
+                            "high"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "flag",
+                        "evidence",
+                        "severity"
+                      ]
+                    }
+                  },
+                  "language": {
+                    "type": "string",
+                    "description": "ISO 639-1 code of the language the posting is written in (e.g. 'en', 'de', 'fr')."
+                  },
+                  "english_translation": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "If the posting is not in English: a faithful, complete English translation of the posting text (preserving salary figures, requirements, and tone). If it is in English: null."
+                  }
+                },
+                "required": [
+                  "title",
+                  "seniority",
+                  "must_have_skills",
+                  "nice_to_have_skills",
+                  "salary_range",
+                  "remote_policy",
+                  "red_flags",
+                  "language",
+                  "english_translation"
+                ]
+              },
+              "model": "fast",
+              "temperature": 0.1
+            }
+          },
+          {
+            "id": "score",
+            "type": "llm_structured",
+            "name": "Score attractiveness",
+            "description": "Compute a 1-10 attractiveness score and one-paragraph rationale for the candidate profile, weighted on skills fit, salary transparency, remote policy, and red-flag severity.",
+            "config": {
+              "system": "You are a pragmatic career advisor assessing job postings for a candidate. Be honest and calibrated; do not inflate scores. Base your assessment only on the provided extraction and posting content.",
+              "prompt": "Candidate profile: {{input.candidate_profile ?? 'generic senior software engineer'}}\n\nExtracted posting analysis:\n{{nodes.extract.output | json}}\n\nCompute:\n- attractiveness_score: an integer 1-10 (10 = exceptional fit, 1 = strong avoid), weighted on skills fit vs the candidate profile, salary transparency, remote policy, and red-flag severity (high-severity red flags should pull the score down substantially).\n- score_rationale: one paragraph that cites at least one specific positive factor and at least one specific negative factor drawn from the posting/extraction.\n\nReturn only the JSON object.",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "attractiveness_score": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10
+                  },
+                  "score_rationale": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "attractiveness_score",
+                  "score_rationale"
+                ]
+              },
+              "model": "balanced",
+              "temperature": 0.2
+            }
+          },
+          {
+            "id": "assemble",
+            "type": "transform",
+            "name": "Assemble structured summary",
+            "description": "Combine extraction and scoring into the final structured_summary object with the score clamped to an integer 1-10.",
+            "config": {
+              "value": {
+                "structured_summary": {
+                  "title": "{{nodes.extract.output.title}}",
+                  "seniority": "{{nodes.extract.output.seniority}}",
+                  "must_have_skills": "{{nodes.extract.output.must_have_skills}}",
+                  "nice_to_have_skills": "{{nodes.extract.output.nice_to_have_skills}}",
+                  "salary_range": "{{nodes.extract.output.salary_range}}",
+                  "remote_policy": "{{nodes.extract.output.remote_policy}}",
+                  "red_flags": "{{nodes.extract.output.red_flags}}",
+                  "attractiveness_score": "{{nodes.score.output.attractiveness_score | number}}",
+                  "score_rationale": "{{nodes.score.output.score_rationale}}",
+                  "language": "{{nodes.extract.output.language}}",
+                  "english_translation": "{{nodes.extract.output.english_translation}}"
+                }
+              },
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "structured_summary": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "seniority": {
+                        "type": "string"
+                      },
+                      "must_have_skills": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "nice_to_have_skills": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "salary_range": {},
+                      "remote_policy": {
+                        "type": "string"
+                      },
+                      "red_flags": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "flag": {
+                              "type": "string"
+                            },
+                            "evidence": {
+                              "type": "string"
+                            },
+                            "severity": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "attractiveness_score": {
+                        "type": "integer"
+                      },
+                      "score_rationale": {
+                        "type": "string"
+                      },
+                      "language": {
+                        "type": "string"
+                      },
+                      "english_translation": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "title",
+                      "seniority",
+                      "must_have_skills",
+                      "nice_to_have_skills",
+                      "salary_range",
+                      "remote_policy",
+                      "red_flags",
+                      "attractiveness_score",
+                      "score_rationale",
+                      "language",
+                      "english_translation"
+                    ]
+                  }
+                },
+                "required": [
+                  "structured_summary"
+                ]
+              }
+            }
+          },
+          {
+            "id": "output",
+            "type": "output",
+            "name": "Output",
+            "config": {
+              "value": {
+                "structured_summary": "{{nodes.assemble.output.structured_summary}}"
+              }
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "input",
+            "to": "normalize"
+          },
+          {
+            "from": "normalize",
+            "to": "extract"
+          },
+          {
+            "from": "extract",
+            "to": "score"
+          },
+          {
+            "from": "extract",
+            "to": "assemble"
+          },
+          {
+            "from": "score",
+            "to": "assemble"
+          },
+          {
+            "from": "assemble",
+            "to": "output"
+          }
+        ],
+        "policy": {
+          "maxCostUsd": 0.5,
+          "maxNodeExecutions": 500,
+          "timeoutMs": 600000,
+          "requireApprovalForSideEffects": false
+        },
+        "tests": [
+          {
+            "id": "t1",
+            "name": "typical_remote_backend_posting",
+            "input": {
+              "posting_text": "Senior Backend Engineer (Remote, US). We need 5+ years with Go and Kubernetes to build our payments platform. Salary: $180k-$220k + equity. Flexible hours, async-first culture. Nice to have: Terraform, AWS.",
+              "candidate_profile": "Senior backend engineer, 8 years Go/Kubernetes, prefers remote."
+            },
+            "criteria": [
+              "Output is valid JSON with all nine declared fields present under structured_summary.",
+              "remote_policy equals 'remote' and is consistent with the '(Remote, US)' language in the posting.",
+              "salary_range reflects the $180k-$220k figure stated in the posting.",
+              "attractiveness_score is an integer 1-10 and score_rationale cites at least one specific positive and one specific negative factor from the posting."
+            ],
+            "checks": [
+              {
+                "path": "structured_summary.remote_policy",
+                "op": "equals",
+                "value": "remote"
+              },
+              {
+                "path": "structured_summary.salary_range",
+                "op": "contains",
+                "value": "180"
+              },
+              {
+                "path": "structured_summary.attractiveness_score",
+                "op": "type",
+                "value": "integer"
+              },
+              {
+                "path": "structured_summary.score_rationale",
+                "op": "minLength",
+                "value": 20
+              }
+            ]
+          },
+          {
+            "id": "t2",
+            "name": "edge_hybrid_staff_with_missing_fields",
+            "input": {
+              "posting_text": "Staff Engineer, Platform. Hybrid (3 days/week, Austin TX). Lead our observability team. 8+ years distributed systems, deep Kubernetes expertise required. Great 401k match. We also value mentorship and a growth mindset.",
+              "candidate_profile": "Staff-level distributed systems engineer, based in Denver, prefers fully remote."
+            },
+            "criteria": [
+              "salary_range is null exactly because no concrete pay figure appears in the posting.",
+              "remote_policy is 'hybrid', consistent with the 'Hybrid (3 days/week, Austin TX)' language.",
+              "must_have_skills and nice_to_have_skills are disjoint lists of short skill strings (no full sentences).",
+              "Every red flag entry has non-empty 'flag', 'evidence', and 'severity' fields, with evidence traceable to the posting text."
+            ],
+            "checks": [
+              {
+                "path": "structured_summary.salary_range",
+                "op": "equals",
+                "value": null
+              },
+              {
+                "path": "structured_summary.remote_policy",
+                "op": "equals",
+                "value": "hybrid"
+              },
+              {
+                "path": "structured_summary.red_flags",
+                "op": "type",
+                "value": "array"
+              }
+            ]
+          },
+          {
+            "id": "t3",
+            "name": "tricky_adversarial_rockstar_posting",
+            "input": {
+              "posting_text": "Rockstar Full-Stack Ninja needed! Must know React, Angular, Vue, Node, Python, Java, Kotlin, Swift, AWS, Azure, GCP. 2 years experience. Competitive salary. Work hard play hard! On-site 6 days/week in downtown SF. We're a family! No whiners. This role may also involve occasional janitorial duties."
+            },
+            "criteria": [
+              "salary_range is null because 'competitive salary' contains no concrete figures, and a red flag is present citing the 'competitive salary' language.",
+              "remote_policy is 'onsite', consistent with 'On-site 6 days/week in downtown SF'.",
+              "Red flags capture at least two of: unrealistic skill breadth vs 2 years experience, 'competitive salary' with no figures, 6-day on-site week, 'family'/'no whiners' culture language, or janitorial duties.",
+              "attractiveness_score is a low integer (1-5) and score_rationale references specific negative factors from the posting."
+            ],
+            "checks": [
+              {
+                "path": "structured_summary.salary_range",
+                "op": "equals",
+                "value": null
+              },
+              {
+                "path": "structured_summary.remote_policy",
+                "op": "equals",
+                "value": "onsite"
+              },
+              {
+                "path": "structured_summary.red_flags",
+                "op": "minLength",
+                "value": 2
+              },
+              {
+                "path": "structured_summary.attractiveness_score",
+                "op": "matches",
+                "value": "^[1-5]$"
+              }
+            ]
+          },
+          {
+            "id": "t4_b29",
+            "name": "non_english_posting_gets_translation",
+            "input": {
+              "posting_text": "Senior Backend-Entwickler (m/w/d, Remote, Deutschland). Wir suchen 5+ Jahre Erfahrung mit Go und Kubernetes für unsere Zahlungsplattform. Gehalt: 90.000–110.000 EUR jährlich plus Beteiligung. Flexible Arbeitszeiten, async-first Kultur. Wünschenswert: Terraform, AWS.",
+              "candidate_profile": "Senior backend engineer, 8 years Go/Kubernetes, prefers remote."
+            },
+            "criteria": [
+              "language is detected as non-English (e.g. 'de') and english_translation is a non-null English translation of the posting.",
+              "The english_translation preserves the salary figures (90,000–110,000 EUR), the Go/Kubernetes requirements, and the remote policy from the original posting.",
+              "All other structured_summary fields (title, seniority, skills, salary_range, remote_policy, red_flags, attractiveness_score, score_rationale) are still present and consistent with the posting content."
+            ],
+            "checks": [
+              {
+                "path": "structured_summary.language",
+                "op": "exists",
+                "value": null
+              },
+              {
+                "path": "structured_summary.english_translation",
+                "op": "type",
+                "value": "string"
+              },
+              {
+                "path": "structured_summary.english_translation",
+                "op": "contains",
+                "value": "Kubernetes"
+              },
+              {
+                "path": "structured_summary.salary_range",
+                "op": "contains",
+                "value": "90"
+              }
+            ]
+          },
+          {
+            "id": "t5_b29",
+            "name": "english_posting_translation_is_null",
+            "input": {
+              "posting_text": "Senior Backend Engineer (Remote, US). We need 5+ years with Go and Kubernetes to build our payments platform. Salary: $180k-$220k + equity. Flexible hours, async-first culture. Nice to have: Terraform, AWS."
+            },
+            "criteria": [
+              "language is 'en' and english_translation is exactly null because the posting is already in English.",
+              "All other fields behave as in the typical remote posting case."
+            ],
+            "checks": [
+              {
+                "path": "structured_summary.language",
+                "op": "equals",
+                "value": "en"
+              },
+              {
+                "path": "structured_summary.english_translation",
+                "op": "equals",
+                "value": null
+              }
+            ]
+          }
+        ],
+        "meta": {
+          "builtBy": "anvil-builder",
+          "request": "An agent that takes a raw job posting text and produces a structured summary: title, seniority level, must-have skills, nice-to-have skills, salary range if mentioned, remote policy, plus a red-flags list (unrealistic requirements, vague pay, toxic phrasing) and a 1-10 attractiveness score for a senior engineer.",
+          "taskSpec": {
+            "name": "Job Posting Analyzer",
+            "agentId": "job-posting-analyzer",
+            "summary": "Parses a raw job posting into a structured summary with skills, salary, remote policy, red flags, and an attractiveness score for a senior engineer.",
+            "goal": "Turn unstructured job posting text into a consistent, structured assessment that a senior engineer can use to quickly decide whether to apply.",
+            "inputs": [
+              {
+                "name": "posting_text",
+                "type": "string",
+                "description": "Raw text of the job posting (may include title, description, requirements, benefits, salary info).",
+                "required": true,
+                "example": "Senior Backend Engineer - We're looking for a rockstar ninja with 10+ years of Go, Kubernetes, and React... Competitive salary. Must be available on-call 24/7."
+              },
+              {
+                "name": "candidate_profile",
+                "type": "string",
+                "description": "Optional short description of the evaluating candidate's background to tailor the attractiveness score (defaults to a generic senior software engineer).",
+                "required": false,
+                "example": "Senior backend engineer, 8 years Go/Kubernetes, prefers remote, dislikes on-call."
+              }
+            ],
+            "outputs": [
+              {
+                "name": "structured_summary",
+                "type": "object",
+                "description": "Object with fields: title (string), seniority (string: junior|mid|senior|staff|principal|unknown), must_have_skills (array of strings), nice_to_have_skills (array of strings), salary_range (object with min, max, currency, period, or null if not mentioned), remote_policy (string: remote|hybrid|onsite|unclear), red_flags (array of {flag, evidence, severity: low|medium|high}), attractiveness_score (integer 1-10), score_rationale (string)."
+              }
+            ],
+            "steps": [
+              "Normalize the raw posting text (strip HTML/boilerplate, collapse whitespace).",
+              "Extract the job title and infer seniority level from title and description language.",
+              "Split listed requirements into must-have vs nice-to-have skills using cue words ('required', 'must' vs 'preferred', 'plus', 'nice to have'); default to must-have when ambiguous.",
+              "Detect salary information (ranges, single figures, equity/bonus mentions); record null with a red flag if pay is vague or absent while the posting claims 'competitive salary'.",
+              "Classify remote policy as remote, hybrid, onsite, or unclear based on explicit statements and location requirements.",
+              "Scan for red flags: unrealistic requirement stacks (e.g., 10+ years for a mid role, 5+ unrelated specializations), vague or missing pay, toxic phrasing ('rockstar', 'work hard play hard', 'wear many hats', unpaid overtime hints, 24/7 on-call without compensation), and bait-and-switch signals.",
+              "Compute a 1-10 attractiveness score for the candidate profile (default: generic senior engineer), weighting skills fit, salary transparency, remote policy, and red-flag severity.",
+              "Emit the structured_summary object with a one-paragraph score rationale citing the strongest positive and negative factors."
+            ],
+            "constraints": [
+              "Never invent salary figures; only report what the text states, using null otherwise.",
+              "Every red flag must include a verbatim or near-verbatim quote from the posting as evidence.",
+              "attractiveness_score must be an integer 1-10; 10 = exceptional fit, 1 = strong avoid.",
+              "If the posting text is too short or garbled to analyze, return the structure with 'unknown' values and a red flag noting insufficient information rather than failing.",
+              "Do not infer protected-class or demographic information; assess the posting content only.",
+              "Output must be a single JSON object matching the declared schema, no extra prose."
+            ],
+            "successCriteria": [
+              "Output is valid JSON with all declared fields present (title, seniority, must_have_skills, nice_to_have_skills, salary_range, remote_policy, red_flags, attractiveness_score, score_rationale).",
+              "Every red flag entry contains non-empty 'flag', 'evidence', and 'severity' fields, and evidence text appears in (or is a close paraphrase of) the input posting.",
+              "salary_range is null exactly when no concrete pay figure appears in the posting; if 'competitive salary' appears without figures, a red flag is present.",
+              "remote_policy is one of the four allowed values and is consistent with location/on-site language in the posting.",
+              "attractiveness_score is an integer between 1 and 10, and score_rationale references at least one specific positive and one specific negative factor from the posting.",
+              "must_have and nice_to_have skills are disjoint lists of short skill strings (no full sentences)."
+            ],
+            "assumptions": [
+              "Default evaluation persona is a generic senior software engineer when candidate_profile is omitted.",
+              "Salary figures default to USD when a currency is not stated but a $ symbol or US location is present.",
+              "Seniority is inferred from both title keywords and years-of-experience requirements; 'unknown' is acceptable when signals conflict.",
+              "Single-language (English) postings; no translation needed.",
+              "No web lookup is performed; analysis is based solely on provided text.",
+              "One posting per invocation; batch processing is out of scope."
+            ],
+            "clarifyingQuestions": [],
+            "exampleInputs": [
+              {
+                "posting_text": "Senior Backend Engineer (Remote, US). We need 5+ years with Go and Kubernetes to build our payments platform. Salary: $180k-$220k + equity. Flexible hours, async-first culture. Nice to have: Terraform, AWS.",
+                "candidate_profile": "Senior backend engineer, 8 years Go/Kubernetes, prefers remote."
+              },
+              {
+                "posting_text": "Rockstar Full-Stack Ninja needed! Must know React, Angular, Vue, Node, Python, Java, Kotlin, Swift, AWS, Azure, GCP. 2 years experience. Competitive salary. Work hard play hard! On-site 6 days/week in downtown SF."
+              },
+              {
+                "posting_text": "Staff Engineer, Platform. Hybrid (3 days/week, Austin TX). Lead our observability team. 8+ years distributed systems, deep Kubernetes expertise required. Compensation: $210,000 base + 15% bonus. Great 401k match."
+              },
+              {
+                "posting_text": "Junior-ish Developer (we'll train you!) - entry level but must have 7 years commercial React experience. Pay: DOE. Must be available weekends. Fast-paced environment, wear many hats!"
+              }
+            ]
+          },
+          "plan": {
+            "pattern": "pipeline",
+            "rationale": "Fixed deterministic sequence: clean text → structured extraction (skills/salary/remote/red flags) → scoring with rationale → assemble final object. No branching, lists, web, or human steps needed; llm_structured guarantees schema-valid fields and code handles normalization exactly.",
+            "steps": [
+              {
+                "id": "normalize",
+                "type": "code",
+                "purpose": "Strip HTML tags/boilerplate and collapse whitespace from {{input.posting_text}}; also detect if the text is too short/garbled (< ~40 chars) to analyze.",
+                "dependsOn": [
+                  "input"
+                ]
+              },
+              {
+                "id": "extract",
+                "type": "llm_structured",
+                "purpose": "Extract from the normalized text: title, seniority (junior|mid|senior|staff|principal|unknown), must_have_skills vs nice_to_have_skills split by cue words (default must-have when ambiguous), salary_range (min/max/currency/period or null — never invented, flag 'competitive salary' with no figures), remote_policy (remote|hybrid|onsite|unclear), and red_flags array of {flag, evidence (verbatim quote), severity (low|medium|high)} covering unrealistic stacks, vague pay, toxic phrasing, on-call without compensation, bait-and-switch. If text is too short, return unknown values plus an insufficient-information red flag.",
+                "dependsOn": [
+                  "normalize"
+                ],
+                "model": "fast"
+              },
+              {
+                "id": "score",
+                "type": "llm_structured",
+                "purpose": "Compute attractiveness_score (integer 1-10) and score_rationale (one paragraph citing at least one specific positive and one specific negative factor), weighted on skills fit vs the candidate profile ({{input.candidate_profile ?? 'generic senior software engineer'}}), salary transparency, remote policy, and red-flag severity.",
+                "dependsOn": [
+                  "extract"
+                ],
+                "model": "balanced"
+              },
+              {
+                "id": "assemble",
+                "type": "transform",
+                "purpose": "Combine extract and score outputs into the single structured_summary object with all nine declared fields; clamp attractiveness_score to integer 1-10.",
+                "dependsOn": [
+                  "extract",
+                  "score"
+                ]
+              }
+            ],
+            "output": "structured_summary: object from assemble — title, seniority, must_have_skills, nice_to_have_skills, salary_range (or null), remote_policy, red_flags from extract; attractiveness_score and score_rationale from score."
+          },
+          "pattern": "pipeline",
+          "compile": [
+            {
+              "attempt": 0,
+              "strategy": "autofix",
+              "errors": 0,
+              "warnings": 0
+            }
+          ],
+          "evolution": [
+            {
+              "round": 0,
+              "score": 0.954,
+              "passRate": 1,
+              "accepted": true,
+              "change": "initial build"
+            }
+          ],
+          "refinements": [
+            {
+              "at": 1790530903233,
+              "instruction": "Also detect the language of the posting and, if it is not English, add an english_translation field containing a faithful English translation of the posting.",
+              "summary": "Added language detection and English translation: the extract node now also returns 'language' and 'english_translation' (null when the posting is already English), and both fields flow through the assemble transform into the output schema. Added a test for a non-English posting."
+            }
+          ],
+          "taxonomy": {
+            "pattern": "pipeline",
+            "domain": "human_resources",
+            "sourceKind": "input_only",
+            "outputKind": "data"
+          }
+        }
+      },
+      "createdAt": 1790530909675,
+      "note": "Also detect the language of the posting and, if it is not English, add an english_translation field containing a faithful English translation of the posting.",
+      "score": 0.954,
+      "evaluation": {
+        "version": 2,
+        "passRate": 1,
+        "score": 0.954,
+        "results": [
+          {
+            "testId": "t1",
+            "name": "typical_remote_backend_posting",
+            "passed": true,
+            "score": 0.915,
+            "output": {
+              "structured_summary": {
+                "title": "Senior Backend Engineer",
+                "seniority": "senior",
+                "must_have_skills": [
+                  "Go",
+                  "Kubernetes"
+                ],
+                "nice_to_have_skills": [
+                  "Terraform",
+                  "AWS"
+                ],
+                "salary_range": {
+                  "min": 180000,
+                  "max": 220000,
+                  "currency": "USD",
+                  "period": "year"
+                },
+                "remote_policy": "remote",
+                "red_flags": [],
+                "attractiveness_score": 9,
+                "score_rationale": "Excellent fit: the posting requires exactly the candidate's core strengths (Go, Kubernetes) at senior level, offers full remote matching their preference, and provides transparent, competitive salary ($180k–$220k USD) with no red flags. The only minor gap is that nice-to-have Terraform/AWS experience isn't listed in the candidate profile, but that doesn't materially detract from an otherwise near-ideal match.",
+                "language": "en",
+                "english_translation": null
+              }
+            },
+            "criteria": [
+              {
+                "criterion": "Output is valid JSON with all nine declared fields present under structured_summary.",
+                "probability": 0.83,
+                "passed": true
+              },
+              {
+                "criterion": "remote_policy equals 'remote' and is consistent with the '(Remote, US)' language in the posting.",
+                "probability": 0.95,
+                "passed": true
+              },
+              {
+                "criterion": "salary_range reflects the $180k-$220k figure stated in the posting.",
+                "probability": 0.99,
+                "passed": true
+              },
+              {
+                "criterion": "attractiveness_score is an integer 1-10 and score_rationale cites at least one specific positive and one specific negative factor from the posting.",
+                "probability": 0.55,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "structured_summary.remote_policy",
+                  "op": "equals",
+                  "value": "remote"
+                },
+                "passed": true,
+                "actual": "remote"
+              },
+              {
+                "check": {
+                  "path": "structured_summary.salary_range",
+                  "op": "contains",
+                  "value": "180"
+                },
+                "passed": true,
+                "actual": {
+                  "min": 180000,
+                  "max": 220000,
+                  "currency": "USD",
+                  "period": "year"
+                }
+              },
+              {
+                "check": {
+                  "path": "structured_summary.attractiveness_score",
+                  "op": "type",
+                  "value": "integer"
+                },
+                "passed": true,
+                "actual": 9
+              },
+              {
+                "check": {
+                  "path": "structured_summary.score_rationale",
+                  "op": "minLength",
+                  "value": 20
+                },
+                "passed": true,
+                "actual": "Excellent fit: the posting requires exactly the candidate's core strengths (Go, Kubernetes) at senior level, offers full remote matching their preference, and provides transparent, competitive salary ($180k–$220k USD) with no red flags. The only minor gap is that nice-to-have Terraform/AWS experienc…"
+              }
+            ],
+            "runId": "run_rdCOnaPkLop3",
+            "costUsd": 0.00027170000000000004,
+            "durationMs": 2746
+          },
+          {
+            "testId": "t2",
+            "name": "edge_hybrid_staff_with_missing_fields",
+            "passed": true,
+            "score": 0.967,
+            "output": {
+              "structured_summary": {
+                "title": "Staff Engineer, Platform",
+                "seniority": "staff",
+                "must_have_skills": [
+                  "Distributed systems",
+                  "Kubernetes"
+                ],
+                "nice_to_have_skills": [],
+                "salary_range": null,
+                "remote_policy": "hybrid",
+                "red_flags": [
+                  {
+                    "flag": "vague pay",
+                    "evidence": "Great 401k match",
+                    "severity": "medium"
+                  }
+                ],
+                "attractiveness_score": 5,
+                "score_rationale": "Strong skills fit: the Staff Engineer, Platform role requires distributed systems and Kubernetes, matching the candidate's staff-level distributed systems background exactly. However, the posting is hybrid while the candidate prefers fully remote, which is a significant mismatch, and there is no salary range disclosed (only a vague 'Great 401k match' benefit), a medium-severity transparency red flag that makes it hard to evaluate compensation. Overall a solid technical match undermined by remote-policy friction and pay opacity.",
+                "language": "en",
+                "english_translation": null
+              }
+            },
+            "criteria": [
+              {
+                "criterion": "salary_range is null exactly because no concrete pay figure appears in the posting.",
+                "probability": 0.93,
+                "passed": true
+              },
+              {
+                "criterion": "remote_policy is 'hybrid', consistent with the 'Hybrid (3 days/week, Austin TX)' language.",
+                "probability": 0.98,
+                "passed": true
+              },
+              {
+                "criterion": "must_have_skills and nice_to_have_skills are disjoint lists of short skill strings (no full sentences).",
+                "probability": 0.97,
+                "passed": true
+              },
+              {
+                "criterion": "Every red flag entry has non-empty 'flag', 'evidence', and 'severity' fields, with evidence traceable to the posting text.",
+                "probability": 0.89,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "structured_summary.salary_range",
+                  "op": "equals",
+                  "value": null
+                },
+                "passed": true,
+                "actual": null
+              },
+              {
+                "check": {
+                  "path": "structured_summary.remote_policy",
+                  "op": "equals",
+                  "value": "hybrid"
+                },
+                "passed": true,
+                "actual": "hybrid"
+              },
+              {
+                "check": {
+                  "path": "structured_summary.red_flags",
+                  "op": "type",
+                  "value": "array"
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "flag": "vague pay",
+                    "evidence": "Great 401k match",
+                    "severity": "medium"
+                  }
+                ]
+              }
+            ],
+            "runId": "run_BpfZNZpoKsE0",
+            "costUsd": 0.0002776,
+            "durationMs": 2648
+          },
+          {
+            "testId": "t3",
+            "name": "tricky_adversarial_rockstar_posting",
+            "passed": true,
+            "score": 0.992,
+            "output": {
+              "structured_summary": {
+                "title": "Rockstar Full-Stack Ninja",
+                "seniority": "unknown",
+                "must_have_skills": [
+                  "React",
+                  "Angular",
+                  "Vue",
+                  "Node",
+                  "Python",
+                  "Java",
+                  "Kotlin",
+                  "Swift",
+                  "AWS",
+                  "Azure",
+                  "GCP"
+                ],
+                "nice_to_have_skills": [],
+                "salary_range": null,
+                "remote_policy": "onsite",
+                "red_flags": [
+                  {
+                    "flag": "unrealistic requirement stack",
+                    "evidence": "Must know React, Angular, Vue, Node, Python, Java, Kotlin, Swift, AWS, Azure, GCP",
+                    "severity": "high"
+                  },
+                  {
+                    "flag": "vague pay",
+                    "evidence": "Competitive salary",
+                    "severity": "medium"
+                  },
+                  {
+                    "flag": "toxic phrasing",
+                    "evidence": "Rockstar Full-Stack Ninja... Work hard play hard! We're a family! No whiners.",
+                    "severity": "high"
+                  },
+                  {
+                    "flag": "bait-and-switch / experience mismatch",
+                    "evidence": "2 years experience for a role requiring 10+ technologies",
+                    "severity": "medium"
+                  },
+                  {
+                    "flag": "scope creep / bait-and-switch duties",
+                    "evidence": "This role may also involve occasional janitorial duties.",
+                    "severity": "high"
+                  },
+                  {
+                    "flag": "excessive on-site schedule",
+                    "evidence": "On-site 6 days/week in downtown SF",
+                    "severity": "high"
+                  }
+                ],
+                "attractiveness_score": 2,
+                "score_rationale": "The posting offers broad full-stack exposure (React, Node, Python, cloud platforms), which could suit a senior engineer, but it is overwhelmed by red flags: an unrealistic requirement stack spanning 10+ technologies, toxic 'Rockstar Ninja / No whiners' phrasing, undisclosed salary, mandatory on-site 6 days/week in downtown SF, and even 'occasional janitorial duties,' all signaling a poorly managed or exploitative employer.",
+                "language": "en",
+                "english_translation": null
+              }
+            },
+            "criteria": [
+              {
+                "criterion": "salary_range is null because 'competitive salary' contains no concrete figures, and a red flag is present citing the 'competitive salary' language.",
+                "probability": 0.98,
+                "passed": true
+              },
+              {
+                "criterion": "remote_policy is 'onsite', consistent with 'On-site 6 days/week in downtown SF'.",
+                "probability": 0.99,
+                "passed": true
+              },
+              {
+                "criterion": "Red flags capture at least two of: unrealistic skill breadth vs 2 years experience, 'competitive salary' with no figures, 6-day on-site week, 'family'/'no whiners' culture language, or janitorial duties.",
+                "probability": 0.99,
+                "passed": true
+              },
+              {
+                "criterion": "attractiveness_score is a low integer (1-5) and score_rationale references specific negative factors from the posting.",
+                "probability": 0.98,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "structured_summary.salary_range",
+                  "op": "equals",
+                  "value": null
+                },
+                "passed": true,
+                "actual": null
+              },
+              {
+                "check": {
+                  "path": "structured_summary.remote_policy",
+                  "op": "equals",
+                  "value": "onsite"
+                },
+                "passed": true,
+                "actual": "onsite"
+              },
+              {
+                "check": {
+                  "path": "structured_summary.red_flags",
+                  "op": "minLength",
+                  "value": 2
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "flag": "unrealistic requirement stack",
+                    "evidence": "Must know React, Angular, Vue, Node, Python, Java, Kotlin, Swift, AWS, Azure, GCP",
+                    "severity": "high"
+                  },
+                  {
+                    "flag": "vague pay",
+                    "evidence": "Competitive salary",
+                    "severity": "medium"
+                  },
+                  {
+                    "flag": "toxic phrasing",
+                    "evidence": "Rockstar Full-Stack Ninja... Work hard play hard! We're a family! No whiners.",
+                    "severity": "high"
+                  },
+                  {
+                    "flag": "bait-and-switch / experience mismatch",
+                    "evidence": "2 years experience for a role requiring 10+ technologies",
+                    "severity": "medium"
+                  },
+                  {
+                    "flag": "scope creep / bait-and-switch duties",
+                    "evidence": "This role may also involve occasional janitorial duties.",
+                    "severity": "high"
+                  },
+                  {
+                    "flag": "excessive on-site schedule",
+                    "evidence": "On-site 6 days/week in downtown SF",
+                    "severity": "high"
+                  }
+                ]
+              },
+              {
+                "check": {
+                  "path": "structured_summary.attractiveness_score",
+                  "op": "matches",
+                  "value": "^[1-5]$"
+                },
+                "passed": true,
+                "actual": 2
+              }
+            ],
+            "runId": "run_vhRmoZlexEt9",
+            "costUsd": 0.00040175,
+            "durationMs": 3671
+          },
+          {
+            "testId": "t4_b29",
+            "name": "non_english_posting_gets_translation",
+            "passed": true,
+            "score": 0.973,
+            "output": {
+              "structured_summary": {
+                "title": "Senior Backend-Entwickler (m/w/d)",
+                "seniority": "senior",
+                "must_have_skills": [
+                  "Go",
+                  "Kubernetes"
+                ],
+                "nice_to_have_skills": [
+                  "Terraform",
+                  "AWS"
+                ],
+                "salary_range": {
+                  "min": 90000,
+                  "max": 110000,
+                  "currency": "EUR",
+                  "period": "yearly"
+                },
+                "remote_policy": "remote",
+                "red_flags": [],
+                "attractiveness_score": 9,
+                "score_rationale": "Excellent fit: the posting requires exactly the candidate's core stack (Go and Kubernetes, 5+ years vs their 8), is explicitly remote with an async-first culture matching their preference, and offers transparent salary (90k–110k EUR) plus equity with no red flags. The only minor drawbacks are the seniority title ('Developer' rather than 'Senior/Staff engineer') and the modest salary ceiling of 110k EUR for a senior engineer in Germany, plus nice-to-haves (Terraform, AWS) the candidate may not have.",
+                "language": "de",
+                "english_translation": "Senior Backend Developer (m/f/d, Remote, Germany). We are looking for 5+ years of experience with Go and Kubernetes for our payments platform. Salary: 90,000–110,000 EUR annually plus equity. Flexible working hours, async-first culture. Nice to have: Terraform, AWS."
+              }
+            },
+            "criteria": [
+              {
+                "criterion": "language is detected as non-English (e.g. 'de') and english_translation is a non-null English translation of the posting.",
+                "probability": 0.98,
+                "passed": true
+              },
+              {
+                "criterion": "The english_translation preserves the salary figures (90,000–110,000 EUR), the Go/Kubernetes requirements, and the remote policy from the original posting.",
+                "probability": 0.96,
+                "passed": true
+              },
+              {
+                "criterion": "All other structured_summary fields (title, seniority, skills, salary_range, remote_policy, red_flags, attractiveness_score, score_rationale) are still present and consistent with the posting content.",
+                "probability": 0.87,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "structured_summary.language",
+                  "op": "exists",
+                  "value": null
+                },
+                "passed": true,
+                "actual": "de"
+              },
+              {
+                "check": {
+                  "path": "structured_summary.english_translation",
+                  "op": "type",
+                  "value": "string"
+                },
+                "passed": true,
+                "actual": "Senior Backend Developer (m/f/d, Remote, Germany). We are looking for 5+ years of experience with Go and Kubernetes for our payments platform. Salary: 90,000–110,000 EUR annually plus equity. Flexible working hours, async-first culture. Nice to have: Terraform, AWS."
+              },
+              {
+                "check": {
+                  "path": "structured_summary.english_translation",
+                  "op": "contains",
+                  "value": "Kubernetes"
+                },
+                "passed": true,
+                "actual": "Senior Backend Developer (m/f/d, Remote, Germany). We are looking for 5+ years of experience with Go and Kubernetes for our payments platform. Salary: 90,000–110,000 EUR annually plus equity. Flexible working hours, async-first culture. Nice to have: Terraform, AWS."
+              },
+              {
+                "check": {
+                  "path": "structured_summary.salary_range",
+                  "op": "contains",
+                  "value": "90"
+                },
+                "passed": true,
+                "actual": {
+                  "min": 90000,
+                  "max": 110000,
+                  "currency": "EUR",
+                  "period": "yearly"
+                }
+              }
+            ],
+            "runId": "run_vr_3IG18dXyi",
+            "costUsd": 0.00033370000000000003,
+            "durationMs": 2652
+          },
+          {
+            "testId": "t5_b29",
+            "name": "english_posting_translation_is_null",
+            "passed": true,
+            "score": 0.925,
+            "output": {
+              "structured_summary": {
+                "title": "Senior Backend Engineer",
+                "seniority": "senior",
+                "must_have_skills": [
+                  "Go",
+                  "Kubernetes"
+                ],
+                "nice_to_have_skills": [
+                  "Terraform",
+                  "AWS"
+                ],
+                "salary_range": {
+                  "min": 180000,
+                  "max": 220000,
+                  "currency": "USD",
+                  "period": "year"
+                },
+                "remote_policy": "remote",
+                "red_flags": [],
+                "attractiveness_score": 7,
+                "score_rationale": "Strong structural positives: fully remote policy, transparent salary range of $180k–$220k USD, senior-level title matching the candidate, and no red flags detected. However, the must-have skills are specific (Go, Kubernetes) and the extraction gives no evidence the generic senior software engineer profile actually has Go experience, which is a meaningful fit risk; nice-to-haves like Terraform and AWS are common but don't offset that uncertainty. Overall a well-structured, attractive posting whose main drawback is unverified alignment with the required language and infrastructure stack.",
+                "language": "en",
+                "english_translation": null
+              }
+            },
+            "criteria": [
+              {
+                "criterion": "language is 'en' and english_translation is exactly null because the posting is already in English.",
+                "probability": 0.92,
+                "passed": true
+              },
+              {
+                "criterion": "All other fields behave as in the typical remote posting case.",
+                "probability": 0.78,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "structured_summary.language",
+                  "op": "equals",
+                  "value": "en"
+                },
+                "passed": true,
+                "actual": "en"
+              },
+              {
+                "check": {
+                  "path": "structured_summary.english_translation",
+                  "op": "equals",
+                  "value": null
+                },
+                "passed": true,
+                "actual": null
+              }
+            ],
+            "runId": "run_GzjoXVKvtdkc",
+            "costUsd": 0.00029735000000000004,
+            "durationMs": 3692
+          }
+        ],
+        "costUsd": 0.0015821000000000001,
+        "at": 1790530909673
+      },
+      "buildRunId": "run_V2OBrbFLH1sP"
+    }
+  ]
+}

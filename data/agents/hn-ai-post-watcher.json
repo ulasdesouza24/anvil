@@ -1,0 +1,1375 @@
+{
+  "id": "hn-ai-post-watcher",
+  "name": "HN AI Post Watcher",
+  "description": "Classifies each new Hacker News post as AI/ML-related or not and, for relevant ones, produces a one-sentence 'why it matters' summary.",
+  "createdAt": 1790548970294,
+  "updatedAt": 1790549241932,
+  "currentVersion": 2,
+  "versions": [
+    {
+      "version": 1,
+      "spec": {
+        "specVersion": "anvil/v1",
+        "id": "hn-ai-post-watcher",
+        "name": "HN AI Post Watcher",
+        "description": "Classifies each new Hacker News post as AI/ML-related or not and, for relevant ones, produces a one-sentence 'why it matters' summary.",
+        "version": 1,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string",
+              "description": "Post title from the HN feed item"
+            },
+            "link": {
+              "type": "string",
+              "description": "URL of the post or linked article"
+            },
+            "summary": {
+              "type": "string",
+              "description": "Feed item description/summary text (may be empty)"
+            },
+            "published": {
+              "type": "string",
+              "description": "Publication timestamp of the item"
+            },
+            "id": {
+              "type": "string",
+              "description": "Unique feed item identifier for dedupe/tracking"
+            }
+          },
+          "required": [
+            "title",
+            "link"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "is_ai_ml": {
+              "type": "boolean"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "relevant",
+                "skipped"
+              ]
+            },
+            "why_it_matters": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
+        },
+        "nodes": [
+          {
+            "id": "input",
+            "type": "input",
+            "name": "Input",
+            "description": "Feed item fields for one HN post",
+            "config": {}
+          },
+          {
+            "id": "classify_ai_ml",
+            "type": "decision",
+            "name": "Classify AI/ML relevance",
+            "description": "Conservatively decides whether the post is primarily about AI/ML",
+            "config": {
+              "state": {
+                "title": "{{input.title}}",
+                "summary": "{{input.summary ?? \"\"}}"
+              },
+              "questions": {
+                "relevance": {
+                  "type": "choice",
+                  "instructions": "Is this Hacker News post primarily about AI or machine learning (LLMs, agents, RAG, training, models, ML frameworks, research, applied ML)? Be conservative: generic tech/business posts that merely mention AI in passing are not AI/ML. Borderline AI-adjacent hardware or funding/business posts count only if AI/ML is the core subject.",
+                  "criteria": {
+                    "relevant": "AI/ML is the main subject of the post",
+                    "skipped": "AI/ML is absent or only mentioned in passing, or the post is primarily about something else"
+                  }
+                }
+              },
+              "route": "relevance",
+              "minConfidence": 0.6
+            }
+          },
+          {
+            "id": "write_why_it_matters",
+            "type": "llm",
+            "name": "Write why it matters",
+            "description": "One grounded sentence on why the AI/ML post matters",
+            "config": {
+              "system": "You are a concise tech analyst. Use ONLY the provided title and summary — never invent details. Output exactly one sentence, under 40 words, no quotes, no preamble.",
+              "prompt": "Hacker News post:\nTITLE: {{input.title}}\nSUMMARY: {{input.summary ?? \"(none provided — base your sentence on the title alone)\"}}\n\nWrite exactly one sentence explaining why this post matters (novelty, practical use, scale, or controversy), grounded strictly in the title and summary above.",
+              "model": "fast",
+              "maxTokens": 200
+            }
+          },
+          {
+            "id": "assemble_result",
+            "type": "code",
+            "name": "Assemble result",
+            "description": "Computes the uniform four-field output for both branches (template expressions are not allowed in transform, so exact boolean/conditional logic runs in code)",
+            "config": {
+              "code": "const rel = nodes.classify_ai_ml.output.relevance;\nconst conf = nodes.classify_ai_ml.output.answers.relevance.confidence;\nreturn {\n  is_ai_ml: rel === \"relevant\",\n  status: rel,\n  why_it_matters: nodes.write_why_it_matters.output.text ?? \"\",\n  reason: rel === \"relevant\"\n    ? \"AI/ML is the core subject (confidence \" + conf + \")\"\n    : \"Not primarily about AI/ML (confidence \" + conf + \")\"\n};",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "is_ai_ml": {
+                    "type": "boolean"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "why_it_matters": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "id": "output",
+            "type": "output",
+            "name": "Output",
+            "description": "Final structured result",
+            "config": {
+              "value": {
+                "is_ai_ml": "{{nodes.assemble_result.output.is_ai_ml}}",
+                "status": "{{nodes.assemble_result.output.status}}",
+                "why_it_matters": "{{nodes.assemble_result.output.why_it_matters}}",
+                "reason": "{{nodes.assemble_result.output.reason}}"
+              }
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "input",
+            "to": "classify_ai_ml"
+          },
+          {
+            "from": "classify_ai_ml",
+            "to": "write_why_it_matters",
+            "port": "relevant"
+          },
+          {
+            "from": "classify_ai_ml",
+            "to": "assemble_result",
+            "port": "skipped"
+          },
+          {
+            "from": "classify_ai_ml",
+            "to": "assemble_result",
+            "port": "uncertain"
+          },
+          {
+            "from": "write_why_it_matters",
+            "to": "assemble_result"
+          },
+          {
+            "from": "assemble_result",
+            "to": "output"
+          }
+        ],
+        "policy": {
+          "maxCostUsd": 0.5,
+          "maxNodeExecutions": 500,
+          "timeoutMs": 600000,
+          "requireApprovalForSideEffects": false
+        },
+        "tests": [
+          {
+            "id": "t1",
+            "name": "typical_ai_post",
+            "input": {
+              "title": "Show HN: I built an open-source RAG evaluation toolkit",
+              "link": "https://example.com/rag-eval-toolkit",
+              "summary": "A CLI tool that scores retrieval pipelines on faithfulness and recall.",
+              "published": "2025-01-15T09:30:00Z",
+              "id": "hn-item-42871345"
+            },
+            "criteria": [
+              "status is exactly 'relevant'",
+              "is_ai_ml is true",
+              "why_it_matters is exactly one sentence under 40 words referencing the RAG evaluation toolkit or retrieval pipelines",
+              "reason is empty"
+            ],
+            "checks": [
+              {
+                "path": "status",
+                "op": "equals",
+                "value": "relevant"
+              },
+              {
+                "path": "is_ai_ml",
+                "op": "equals",
+                "value": true
+              },
+              {
+                "path": "why_it_matters",
+                "op": "contains",
+                "value": "RAG"
+              },
+              {
+                "path": "why_it_matters",
+                "op": "maxLength",
+                "value": 250
+              }
+            ]
+          },
+          {
+            "id": "t2",
+            "name": "typical_non_ai_post",
+            "input": {
+              "title": "My favorite mechanical keyboards of 2025",
+              "link": "https://example.com/keyboards",
+              "summary": "A roundup of ten keyboards with sound tests.",
+              "published": "2025-01-15T09:35:00Z",
+              "id": "hn-item-42871346"
+            },
+            "criteria": [
+              "status is exactly 'skipped'",
+              "is_ai_ml is false",
+              "why_it_matters is empty",
+              "reason explains the exclusion and mentions no AI/ML relevance"
+            ],
+            "checks": [
+              {
+                "path": "status",
+                "op": "equals",
+                "value": "skipped"
+              },
+              {
+                "path": "is_ai_ml",
+                "op": "equals",
+                "value": false
+              },
+              {
+                "path": "why_it_matters",
+                "op": "maxLength",
+                "value": 0
+              },
+              {
+                "path": "reason",
+                "op": "minLength",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "id": "t3",
+            "name": "tricky_ambiguous_tangential_ai_mention",
+            "input": {
+              "title": "We cut our cloud bill 80% by rewriting our backend in Rust",
+              "link": "https://example.com/rust-cloud-bill",
+              "summary": "A detailed writeup of migrating a monolith to Rust, including one paragraph noting they experimented with ML-based autoscaling before abandoning it.",
+              "published": "2025-01-15T09:45:00Z",
+              "id": "hn-item-42871347"
+            },
+            "criteria": [
+              "status is exactly 'relevant' or exactly 'skipped' (either defensible, but one must be chosen)",
+              "is_ai_ml is consistent with status (true iff relevant)",
+              "if relevant, why_it_matters is one sentence under 40 words referencing something concrete from the title or summary (e.g., Rust migration or ML autoscaling)",
+              "if skipped, reason explains the exclusion and why_it_matters is empty"
+            ],
+            "checks": [
+              {
+                "path": "status",
+                "op": "matches",
+                "value": "^(relevant|skipped)$"
+              },
+              {
+                "path": "why_it_matters",
+                "op": "maxLength",
+                "value": 250
+              },
+              {
+                "path": "reason",
+                "op": "type",
+                "value": "string"
+              }
+            ]
+          }
+        ],
+        "triggers": [
+          {
+            "id": "new_hn_posts",
+            "enabled": false,
+            "input": {
+              "title": "{{item.title}}",
+              "link": "{{item.link}}",
+              "summary": "{{item.summary}}",
+              "published": "{{item.published}}",
+              "id": "{{item.id}}"
+            },
+            "type": "poll",
+            "source": {
+              "kind": "rss",
+              "url": "https://hnrss.org/newest"
+            },
+            "every": "2m",
+            "skipExisting": true,
+            "maxPerCheck": 5
+          }
+        ],
+        "meta": {
+          "builtBy": "anvil-builder",
+          "request": "Watch the Hacker News newest feed (https://hnrss.org/newest) every 2 minutes. For each new post, decide whether it is about AI or machine learning; if it is, write a one-sentence summary of why it matters, otherwise just tag it as skipped.",
+          "taskSpec": {
+            "name": "HN AI Post Watcher",
+            "agentId": "hn-ai-post-watcher",
+            "summary": "For each new Hacker News post from the newest feed, classifies whether it is about AI/ML and, if so, produces a one-sentence 'why it matters' summary; otherwise tags it as skipped.",
+            "goal": "Continuously monitor Hacker News newest posts and surface only AI/ML-related ones with a concise relevance summary, tagging all others as skipped.",
+            "inputs": [
+              {
+                "name": "title",
+                "type": "string",
+                "description": "Post title from the HN feed item",
+                "required": true,
+                "example": "Show HN: I built an open-source RAG evaluation toolkit"
+              },
+              {
+                "name": "link",
+                "type": "string",
+                "description": "URL of the post or linked article",
+                "required": true,
+                "example": "https://example.com/rag-eval-toolkit"
+              },
+              {
+                "name": "summary",
+                "type": "string",
+                "description": "Feed item description/summary text (may be empty)",
+                "required": false,
+                "example": "A CLI tool that scores retrieval pipelines on faithfulness and recall."
+              },
+              {
+                "name": "published",
+                "type": "string",
+                "description": "Publication timestamp of the item",
+                "required": false,
+                "example": "2025-01-15T09:30:00Z"
+              },
+              {
+                "name": "id",
+                "type": "string",
+                "description": "Unique feed item identifier for dedupe/tracking",
+                "required": false,
+                "example": "hn-item-42871345"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "is_ai_ml",
+                "type": "boolean",
+                "description": "True if the post is about AI or machine learning"
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Either 'relevant' or 'skipped'"
+              },
+              {
+                "name": "why_it_matters",
+                "type": "string",
+                "description": "One-sentence summary of why the post matters; empty string when skipped"
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "Brief note on the classification decision (matched topics or why it was skipped)"
+              }
+            ],
+            "steps": [
+              "Read the incoming feed item fields (title, link, summary).",
+              "Classify the post as AI/ML-related by checking title and summary for AI/ML topics (LLMs, agents, RAG, training, models, ML frameworks, research, etc.), treating borderline hardware/business posts as relevant only if AI/ML is the core subject.",
+              "If relevant, write exactly one sentence explaining why the post matters (novelty, practical use, scale, or controversy), grounded only in the title/summary content.",
+              "If not relevant, set status to 'skipped' with an empty why_it_matters and a short reason.",
+              "Emit the structured output {is_ai_ml, status, why_it_matters, reason} for downstream delivery (e.g., to a log, sheet, or messaging channel)."
+            ],
+            "constraints": [
+              "Do not fetch the feed or the linked article; judge only from the provided title and summary.",
+              "why_it_matters must be a single sentence and under 40 words.",
+              "Never fabricate details not present in the item; if the summary is empty, base the summary on the title alone and note low confidence in reason.",
+              "Keep classification conservative: generic tech/business posts that merely mention AI in passing should be skipped.",
+              "Output must always include all four fields, even for skipped items."
+            ],
+            "successCriteria": [
+              "Every output has status set to exactly 'relevant' or 'skipped' and is_ai_ml consistent with it.",
+              "For relevant items, why_it_matters is exactly one sentence, under 40 words, and references something concrete from the title or summary.",
+              "For skipped items, why_it_matters is empty and reason explains the exclusion.",
+              "No output contains information not derivable from the provided item fields."
+            ],
+            "assumptions": [
+              "'Every 2 minutes' means the platform polls the feed every 2 minutes and runs this agent once per new item; the agent itself does not fetch the feed.",
+              "AI/ML is interpreted broadly: LLMs, generative AI, ML research, frameworks, agents, and applied ML all count.",
+              "Output is delivered to a default downstream sink (log/notification) configured at deployment; delivery is out of scope for this agent.",
+              "Borderline posts (AI-adjacent hardware, funding news) are skipped unless AI/ML is the main subject."
+            ],
+            "clarifyingQuestions": [],
+            "exampleInputs": [
+              {
+                "title": "Show HN: I built an open-source RAG evaluation toolkit",
+                "link": "https://example.com/rag-eval-toolkit",
+                "summary": "A CLI tool that scores retrieval pipelines on faithfulness and recall.",
+                "published": "2025-01-15T09:30:00Z",
+                "id": "hn-item-42871345"
+              },
+              {
+                "title": "My favorite mechanical keyboards of 2025",
+                "link": "https://example.com/keyboards",
+                "summary": "A roundup of ten keyboards with sound tests.",
+                "published": "2025-01-15T09:35:00Z",
+                "id": "hn-item-42871346"
+              },
+              {
+                "title": "OpenAI releases new o-series model with improved reasoning",
+                "link": "https://example.com/o-series",
+                "summary": "",
+                "published": "2025-01-15T09:40:00Z",
+                "id": "hn-item-42871347"
+              }
+            ],
+            "trigger": {
+              "kind": "poll",
+              "description": "Platform polls https://hnrss.org/newest every 2 minutes, dedupes items, and runs this agent once per new feed item with the item's fields as inputs.",
+              "url": "https://hnrss.org/newest",
+              "every": "2m"
+            }
+          },
+          "plan": {
+            "pattern": "classify_route",
+            "rationale": "Each feed item is independently classified as AI/ML-relevant or not, then only relevant items get a one-sentence 'why it matters' summary; skipped items get empty fields. A cheap decision node handles the conservative classification, an LLM writes the grounded sentence only on the relevant branch, and a merge + transform assembles the uniform four-field output. No web fetching is needed since the agent judges only from provided fields.",
+            "steps": [
+              {
+                "id": "classify_ai_ml",
+                "type": "decision",
+                "purpose": "Classify the post as AI/ML-related or not from {{input.title}} and {{input.summary}}, with a conservative rule: generic tech/business posts mentioning AI only in passing are not AI/ML. Question: 'Is this Hacker News post primarily about AI or machine learning (LLMs, agents, RAG, training, models, ML frameworks, research, applied ML)? Borderline AI-adjacent hardware/business posts count only if AI/ML is the core subject.' Options: relevant / skipped. Route on the answer.",
+                "dependsOn": [
+                  "input"
+                ]
+              },
+              {
+                "id": "write_why_it_matters",
+                "type": "llm",
+                "purpose": "On the 'relevant' branch, write exactly one sentence (under 40 words) explaining why the post matters (novelty, practical use, scale, or controversy), grounded strictly in {{input.title}} and {{input.summary}}; if the summary is empty, base it on the title alone.",
+                "dependsOn": [
+                  "classify_ai_ml"
+                ],
+                "branch": {
+                  "from": "classify_ai_ml",
+                  "port": "relevant"
+                },
+                "model": "fast"
+              },
+              {
+                "id": "assemble_result",
+                "type": "transform",
+                "purpose": "Build the uniform output object: is_ai_ml = true and status='relevant' with why_it_matters from the LLM when the relevant branch ran; otherwise is_ai_ml=false, status='skipped', why_it_matters=''. reason comes from the decision node's explanation (matched topics, or why it was skipped / low confidence note when summary was empty).",
+                "dependsOn": [
+                  "classify_ai_ml",
+                  "write_why_it_matters"
+                ]
+              }
+            ],
+            "output": "is_ai_ml (boolean, from the classification decision), status ('relevant' or 'skipped', from the classification), why_it_matters (one-sentence LLM summary on the relevant branch, empty string when skipped), reason (classification rationale from the decision node, including low-confidence note when summary was empty).",
+            "newClasses": []
+          },
+          "pattern": "classify_route",
+          "compile": [
+            {
+              "attempt": 0,
+              "strategy": "autofix",
+              "errors": 2,
+              "warnings": 0
+            },
+            {
+              "attempt": 1,
+              "strategy": "patch",
+              "errors": 0,
+              "warnings": 0
+            }
+          ],
+          "evolution": [
+            {
+              "round": 0,
+              "score": 0.271,
+              "passRate": 0,
+              "accepted": true,
+              "change": "initial build"
+            }
+          ]
+        }
+      },
+      "createdAt": 1790548970294,
+      "note": "built by Anvil",
+      "score": 0.279,
+      "evaluation": {
+        "version": 1,
+        "passRate": 0,
+        "score": 0.279,
+        "results": [
+          {
+            "testId": "t1",
+            "name": "typical_ai_post",
+            "passed": false,
+            "score": 0.836,
+            "output": {
+              "is_ai_ml": true,
+              "status": "relevant",
+              "why_it_matters": "This open-source CLI toolkit matters because it gives RAG developers a practical, standardized way to measure faithfulness and recall in retrieval pipelines, filling a common evaluation gap.",
+              "reason": "AI/ML is the core subject (confidence 1)"
+            },
+            "criteria": [
+              {
+                "criterion": "status is exactly 'relevant'",
+                "probability": 0.98,
+                "passed": true
+              },
+              {
+                "criterion": "is_ai_ml is true",
+                "probability": 0.99,
+                "passed": true
+              },
+              {
+                "criterion": "why_it_matters is exactly one sentence under 40 words referencing the RAG evaluation toolkit or retrieval pipelines",
+                "probability": 0.71,
+                "passed": true
+              },
+              {
+                "criterion": "reason is empty",
+                "probability": 0.01,
+                "passed": false
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "status",
+                  "op": "equals",
+                  "value": "relevant"
+                },
+                "passed": true,
+                "actual": "relevant"
+              },
+              {
+                "check": {
+                  "path": "is_ai_ml",
+                  "op": "equals",
+                  "value": true
+                },
+                "passed": true,
+                "actual": true
+              },
+              {
+                "check": {
+                  "path": "why_it_matters",
+                  "op": "contains",
+                  "value": "RAG"
+                },
+                "passed": true,
+                "actual": "This open-source CLI toolkit matters because it gives RAG developers a practical, standardized way to measure faithfulness and recall in retrieval pipelines, filling a common evaluation gap."
+              },
+              {
+                "check": {
+                  "path": "why_it_matters",
+                  "op": "maxLength",
+                  "value": 250
+                },
+                "passed": true,
+                "actual": "This open-source CLI toolkit matters because it gives RAG developers a practical, standardized way to measure faithfulness and recall in retrieval pipelines, filling a common evaluation gap."
+              }
+            ],
+            "runId": "run_aIv-8bekxYxe",
+            "costUsd": 0.000053281999999999996,
+            "durationMs": 1442
+          },
+          {
+            "testId": "t2",
+            "name": "typical_non_ai_post",
+            "passed": false,
+            "score": 0,
+            "error": "Node \"assemble_result\" failed: Cannot read properties of null (reading 'text')",
+            "criteria": [],
+            "checks": [],
+            "runId": "run_9EKNCeRH8qKR",
+            "costUsd": 0.000018354,
+            "durationMs": 382
+          },
+          {
+            "testId": "t3",
+            "name": "tricky_ambiguous_tangential_ai_mention",
+            "passed": false,
+            "score": 0,
+            "error": "Node \"assemble_result\" failed: Cannot read properties of null (reading 'text')",
+            "criteria": [],
+            "checks": [],
+            "runId": "run_e2TTSW3RJIwh",
+            "costUsd": 0.000019404,
+            "durationMs": 395
+          }
+        ],
+        "costUsd": 0.00009104,
+        "at": 1790549014191
+      },
+      "buildRunId": "run_2VepqTzHudBc"
+    },
+    {
+      "version": 2,
+      "spec": {
+        "specVersion": "anvil/v1",
+        "id": "hn-ai-post-watcher",
+        "name": "HN AI Post Watcher",
+        "description": "Classifies each new Hacker News post as AI/ML-related or not and, for relevant ones, produces a one-sentence 'why it matters' summary.",
+        "version": 2,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string",
+              "description": "Post title from the HN feed item"
+            },
+            "link": {
+              "type": "string",
+              "description": "URL of the post or linked article"
+            },
+            "summary": {
+              "type": "string",
+              "description": "Feed item description/summary text (may be empty)"
+            },
+            "published": {
+              "type": "string",
+              "description": "Publication timestamp of the item"
+            },
+            "id": {
+              "type": "string",
+              "description": "Unique feed item identifier for dedupe/tracking"
+            }
+          },
+          "required": [
+            "title",
+            "link"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "is_ai_ml": {
+              "type": "boolean"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "relevant",
+                "skipped"
+              ]
+            },
+            "why_it_matters": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
+        },
+        "nodes": [
+          {
+            "id": "input",
+            "type": "input",
+            "name": "Input",
+            "description": "Feed item fields for one HN post",
+            "config": {}
+          },
+          {
+            "id": "classify_ai_ml",
+            "type": "decision",
+            "name": "Classify AI/ML relevance",
+            "description": "Conservatively decides whether the post is primarily about AI/ML",
+            "config": {
+              "state": {
+                "title": "{{input.title}}",
+                "summary": "{{input.summary ?? \"\"}}"
+              },
+              "questions": {
+                "relevance": {
+                  "type": "choice",
+                  "instructions": "Is this Hacker News post primarily about AI or machine learning (LLMs, agents, RAG, training, models, ML frameworks, research, applied ML)? Be conservative: generic tech/business posts that merely mention AI in passing are not AI/ML. Borderline AI-adjacent hardware or funding/business posts count only if AI/ML is the core subject.",
+                  "criteria": {
+                    "relevant": "AI/ML is the main subject of the post",
+                    "skipped": "AI/ML is absent or only mentioned in passing, or the post is primarily about something else"
+                  }
+                }
+              },
+              "route": "relevance",
+              "minConfidence": 0.6
+            }
+          },
+          {
+            "id": "write_why_it_matters",
+            "type": "llm",
+            "name": "Write why it matters",
+            "description": "One grounded sentence on why the AI/ML post matters",
+            "config": {
+              "system": "You are a concise tech analyst. Use ONLY the provided title and summary — never invent details. Output exactly one sentence, under 40 words, no quotes, no preamble.",
+              "prompt": "Hacker News post:\nTITLE: {{input.title}}\nSUMMARY: {{input.summary ?? \"(none provided — base your sentence on the title alone)\"}}\n\nWrite exactly one sentence explaining why this post matters (novelty, practical use, scale, or controversy), grounded strictly in the title and summary above.",
+              "model": "fast",
+              "maxTokens": 200
+            }
+          },
+          {
+            "id": "assemble_result",
+            "type": "code",
+            "name": "Assemble result",
+            "description": "Computes the uniform four-field output for both branches (template expressions are not allowed in transform, so exact boolean/conditional logic runs in code)",
+            "config": {
+              "code": "const rel = nodes.classify_ai_ml.output.relevance;\nconst conf = nodes.classify_ai_ml.output.answers.relevance.confidence;\nconst why = nodes.write_why_it_matters.output?.text ?? \"\";\nreturn {\n  is_ai_ml: rel === \"relevant\",\n  status: rel,\n  why_it_matters: why,\n  reason: rel === \"relevant\"\n    ? \"AI/ML is the core subject (confidence \" + conf + \")\"\n    : \"Not primarily about AI/ML (confidence \" + conf + \")\"\n};",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "is_ai_ml": {
+                    "type": "boolean"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "why_it_matters": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "id": "output",
+            "type": "output",
+            "name": "Output",
+            "description": "Final structured result",
+            "config": {
+              "value": {
+                "is_ai_ml": "{{nodes.assemble_result.output.is_ai_ml}}",
+                "status": "{{nodes.assemble_result.output.status}}",
+                "why_it_matters": "{{nodes.assemble_result.output.why_it_matters}}",
+                "reason": "{{nodes.assemble_result.output.reason}}"
+              }
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "input",
+            "to": "classify_ai_ml"
+          },
+          {
+            "from": "classify_ai_ml",
+            "to": "write_why_it_matters",
+            "port": "relevant"
+          },
+          {
+            "from": "classify_ai_ml",
+            "to": "assemble_result",
+            "port": "skipped"
+          },
+          {
+            "from": "classify_ai_ml",
+            "to": "assemble_result",
+            "port": "uncertain"
+          },
+          {
+            "from": "write_why_it_matters",
+            "to": "assemble_result"
+          },
+          {
+            "from": "assemble_result",
+            "to": "output"
+          }
+        ],
+        "policy": {
+          "maxCostUsd": 0.5,
+          "maxNodeExecutions": 500,
+          "timeoutMs": 600000,
+          "requireApprovalForSideEffects": false
+        },
+        "tests": [
+          {
+            "id": "t1",
+            "name": "typical_ai_post",
+            "input": {
+              "title": "Show HN: I built an open-source RAG evaluation toolkit",
+              "link": "https://example.com/rag-eval-toolkit",
+              "summary": "A CLI tool that scores retrieval pipelines on faithfulness and recall.",
+              "published": "2025-01-15T09:30:00Z",
+              "id": "hn-item-42871345"
+            },
+            "criteria": [
+              "status is exactly 'relevant'",
+              "is_ai_ml is true",
+              "why_it_matters is exactly one sentence under 40 words referencing the RAG evaluation toolkit or retrieval pipelines",
+              "reason is empty"
+            ],
+            "checks": [
+              {
+                "path": "status",
+                "op": "equals",
+                "value": "relevant"
+              },
+              {
+                "path": "is_ai_ml",
+                "op": "equals",
+                "value": true
+              },
+              {
+                "path": "why_it_matters",
+                "op": "contains",
+                "value": "RAG"
+              },
+              {
+                "path": "why_it_matters",
+                "op": "maxLength",
+                "value": 250
+              }
+            ]
+          },
+          {
+            "id": "t2",
+            "name": "typical_non_ai_post",
+            "input": {
+              "title": "My favorite mechanical keyboards of 2025",
+              "link": "https://example.com/keyboards",
+              "summary": "A roundup of ten keyboards with sound tests.",
+              "published": "2025-01-15T09:35:00Z",
+              "id": "hn-item-42871346"
+            },
+            "criteria": [
+              "status is exactly 'skipped'",
+              "is_ai_ml is false",
+              "why_it_matters is empty",
+              "reason explains the exclusion and mentions no AI/ML relevance"
+            ],
+            "checks": [
+              {
+                "path": "status",
+                "op": "equals",
+                "value": "skipped"
+              },
+              {
+                "path": "is_ai_ml",
+                "op": "equals",
+                "value": false
+              },
+              {
+                "path": "why_it_matters",
+                "op": "maxLength",
+                "value": 0
+              },
+              {
+                "path": "reason",
+                "op": "minLength",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "id": "t3",
+            "name": "tricky_ambiguous_tangential_ai_mention",
+            "input": {
+              "title": "We cut our cloud bill 80% by rewriting our backend in Rust",
+              "link": "https://example.com/rust-cloud-bill",
+              "summary": "A detailed writeup of migrating a monolith to Rust, including one paragraph noting they experimented with ML-based autoscaling before abandoning it.",
+              "published": "2025-01-15T09:45:00Z",
+              "id": "hn-item-42871347"
+            },
+            "criteria": [
+              "status is exactly 'relevant' or exactly 'skipped' (either defensible, but one must be chosen)",
+              "is_ai_ml is consistent with status (true iff relevant)",
+              "if relevant, why_it_matters is one sentence under 40 words referencing something concrete from the title or summary (e.g., Rust migration or ML autoscaling)",
+              "if skipped, reason explains the exclusion and why_it_matters is empty"
+            ],
+            "checks": [
+              {
+                "path": "status",
+                "op": "matches",
+                "value": "^(relevant|skipped)$"
+              },
+              {
+                "path": "why_it_matters",
+                "op": "maxLength",
+                "value": 250
+              },
+              {
+                "path": "reason",
+                "op": "type",
+                "value": "string"
+              }
+            ]
+          }
+        ],
+        "triggers": [
+          {
+            "id": "new_hn_posts",
+            "enabled": false,
+            "input": {
+              "title": "{{item.title}}",
+              "link": "{{item.link}}",
+              "summary": "{{item.summary}}",
+              "published": "{{item.published}}",
+              "id": "{{item.id}}"
+            },
+            "type": "poll",
+            "source": {
+              "kind": "rss",
+              "url": "https://hnrss.org/newest"
+            },
+            "every": "2m",
+            "skipExisting": true,
+            "maxPerCheck": 5
+          }
+        ],
+        "meta": {
+          "builtBy": "anvil-builder",
+          "request": "Watch the Hacker News newest feed (https://hnrss.org/newest) every 2 minutes. For each new post, decide whether it is about AI or machine learning; if it is, write a one-sentence summary of why it matters, otherwise just tag it as skipped.",
+          "taskSpec": {
+            "name": "HN AI Post Watcher",
+            "agentId": "hn-ai-post-watcher",
+            "summary": "For each new Hacker News post from the newest feed, classifies whether it is about AI/ML and, if so, produces a one-sentence 'why it matters' summary; otherwise tags it as skipped.",
+            "goal": "Continuously monitor Hacker News newest posts and surface only AI/ML-related ones with a concise relevance summary, tagging all others as skipped.",
+            "inputs": [
+              {
+                "name": "title",
+                "type": "string",
+                "description": "Post title from the HN feed item",
+                "required": true,
+                "example": "Show HN: I built an open-source RAG evaluation toolkit"
+              },
+              {
+                "name": "link",
+                "type": "string",
+                "description": "URL of the post or linked article",
+                "required": true,
+                "example": "https://example.com/rag-eval-toolkit"
+              },
+              {
+                "name": "summary",
+                "type": "string",
+                "description": "Feed item description/summary text (may be empty)",
+                "required": false,
+                "example": "A CLI tool that scores retrieval pipelines on faithfulness and recall."
+              },
+              {
+                "name": "published",
+                "type": "string",
+                "description": "Publication timestamp of the item",
+                "required": false,
+                "example": "2025-01-15T09:30:00Z"
+              },
+              {
+                "name": "id",
+                "type": "string",
+                "description": "Unique feed item identifier for dedupe/tracking",
+                "required": false,
+                "example": "hn-item-42871345"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "is_ai_ml",
+                "type": "boolean",
+                "description": "True if the post is about AI or machine learning"
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Either 'relevant' or 'skipped'"
+              },
+              {
+                "name": "why_it_matters",
+                "type": "string",
+                "description": "One-sentence summary of why the post matters; empty string when skipped"
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "Brief note on the classification decision (matched topics or why it was skipped)"
+              }
+            ],
+            "steps": [
+              "Read the incoming feed item fields (title, link, summary).",
+              "Classify the post as AI/ML-related by checking title and summary for AI/ML topics (LLMs, agents, RAG, training, models, ML frameworks, research, etc.), treating borderline hardware/business posts as relevant only if AI/ML is the core subject.",
+              "If relevant, write exactly one sentence explaining why the post matters (novelty, practical use, scale, or controversy), grounded only in the title/summary content.",
+              "If not relevant, set status to 'skipped' with an empty why_it_matters and a short reason.",
+              "Emit the structured output {is_ai_ml, status, why_it_matters, reason} for downstream delivery (e.g., to a log, sheet, or messaging channel)."
+            ],
+            "constraints": [
+              "Do not fetch the feed or the linked article; judge only from the provided title and summary.",
+              "why_it_matters must be a single sentence and under 40 words.",
+              "Never fabricate details not present in the item; if the summary is empty, base the summary on the title alone and note low confidence in reason.",
+              "Keep classification conservative: generic tech/business posts that merely mention AI in passing should be skipped.",
+              "Output must always include all four fields, even for skipped items."
+            ],
+            "successCriteria": [
+              "Every output has status set to exactly 'relevant' or 'skipped' and is_ai_ml consistent with it.",
+              "For relevant items, why_it_matters is exactly one sentence, under 40 words, and references something concrete from the title or summary.",
+              "For skipped items, why_it_matters is empty and reason explains the exclusion.",
+              "No output contains information not derivable from the provided item fields."
+            ],
+            "assumptions": [
+              "'Every 2 minutes' means the platform polls the feed every 2 minutes and runs this agent once per new item; the agent itself does not fetch the feed.",
+              "AI/ML is interpreted broadly: LLMs, generative AI, ML research, frameworks, agents, and applied ML all count.",
+              "Output is delivered to a default downstream sink (log/notification) configured at deployment; delivery is out of scope for this agent.",
+              "Borderline posts (AI-adjacent hardware, funding news) are skipped unless AI/ML is the main subject."
+            ],
+            "clarifyingQuestions": [],
+            "exampleInputs": [
+              {
+                "title": "Show HN: I built an open-source RAG evaluation toolkit",
+                "link": "https://example.com/rag-eval-toolkit",
+                "summary": "A CLI tool that scores retrieval pipelines on faithfulness and recall.",
+                "published": "2025-01-15T09:30:00Z",
+                "id": "hn-item-42871345"
+              },
+              {
+                "title": "My favorite mechanical keyboards of 2025",
+                "link": "https://example.com/keyboards",
+                "summary": "A roundup of ten keyboards with sound tests.",
+                "published": "2025-01-15T09:35:00Z",
+                "id": "hn-item-42871346"
+              },
+              {
+                "title": "OpenAI releases new o-series model with improved reasoning",
+                "link": "https://example.com/o-series",
+                "summary": "",
+                "published": "2025-01-15T09:40:00Z",
+                "id": "hn-item-42871347"
+              }
+            ],
+            "trigger": {
+              "kind": "poll",
+              "description": "Platform polls https://hnrss.org/newest every 2 minutes, dedupes items, and runs this agent once per new feed item with the item's fields as inputs.",
+              "url": "https://hnrss.org/newest",
+              "every": "2m"
+            }
+          },
+          "plan": {
+            "pattern": "classify_route",
+            "rationale": "Each feed item is independently classified as AI/ML-relevant or not, then only relevant items get a one-sentence 'why it matters' summary; skipped items get empty fields. A cheap decision node handles the conservative classification, an LLM writes the grounded sentence only on the relevant branch, and a merge + transform assembles the uniform four-field output. No web fetching is needed since the agent judges only from provided fields.",
+            "steps": [
+              {
+                "id": "classify_ai_ml",
+                "type": "decision",
+                "purpose": "Classify the post as AI/ML-related or not from {{input.title}} and {{input.summary}}, with a conservative rule: generic tech/business posts mentioning AI only in passing are not AI/ML. Question: 'Is this Hacker News post primarily about AI or machine learning (LLMs, agents, RAG, training, models, ML frameworks, research, applied ML)? Borderline AI-adjacent hardware/business posts count only if AI/ML is the core subject.' Options: relevant / skipped. Route on the answer.",
+                "dependsOn": [
+                  "input"
+                ]
+              },
+              {
+                "id": "write_why_it_matters",
+                "type": "llm",
+                "purpose": "On the 'relevant' branch, write exactly one sentence (under 40 words) explaining why the post matters (novelty, practical use, scale, or controversy), grounded strictly in {{input.title}} and {{input.summary}}; if the summary is empty, base it on the title alone.",
+                "dependsOn": [
+                  "classify_ai_ml"
+                ],
+                "branch": {
+                  "from": "classify_ai_ml",
+                  "port": "relevant"
+                },
+                "model": "fast"
+              },
+              {
+                "id": "assemble_result",
+                "type": "transform",
+                "purpose": "Build the uniform output object: is_ai_ml = true and status='relevant' with why_it_matters from the LLM when the relevant branch ran; otherwise is_ai_ml=false, status='skipped', why_it_matters=''. reason comes from the decision node's explanation (matched topics, or why it was skipped / low confidence note when summary was empty).",
+                "dependsOn": [
+                  "classify_ai_ml",
+                  "write_why_it_matters"
+                ]
+              }
+            ],
+            "output": "is_ai_ml (boolean, from the classification decision), status ('relevant' or 'skipped', from the classification), why_it_matters (one-sentence LLM summary on the relevant branch, empty string when skipped), reason (classification rationale from the decision node, including low-confidence note when summary was empty).",
+            "newClasses": []
+          },
+          "pattern": "classify_route",
+          "compile": [
+            {
+              "attempt": 0,
+              "strategy": "autofix",
+              "errors": 2,
+              "warnings": 0
+            },
+            {
+              "attempt": 1,
+              "strategy": "patch",
+              "errors": 0,
+              "warnings": 0
+            }
+          ],
+          "evolution": [
+            {
+              "round": 0,
+              "score": 0.276,
+              "passRate": 0,
+              "accepted": true,
+              "change": "initial build"
+            },
+            {
+              "round": 1,
+              "score": 0.921,
+              "passRate": 0.667,
+              "accepted": true,
+              "change": "Use optional chaining and a fallback when reading the skipped branch's LLM output in assemble_result, so non-AI posts get an empty why_it_matters instead of a runtime error."
+            },
+            {
+              "round": 2,
+              "score": 0.924,
+              "passRate": 0.667,
+              "accepted": false,
+              "change": "output node: replace the four per-field template strings with a single raw passthrough of nodes.assemble_result.output (rule 7 keeps the object and its types intact, so `reason` can no longer be lost in re-templating); assemble_result code: read decision output defensively (optional chaining + fallbacks) so it can never throw or emit an empty `reason`, and map status to the outputSchema enum ('relevant'/'skipped') even on the uncertain route"
+            }
+          ],
+          "taxonomy": {
+            "pattern": "classify_route",
+            "domain": "news_media",
+            "sourceKind": "api",
+            "outputKind": "data"
+          }
+        }
+      },
+      "createdAt": 1790549241932,
+      "note": "evolved by Anvil",
+      "score": 0.921,
+      "evaluation": {
+        "version": 2,
+        "passRate": 0.667,
+        "score": 0.921,
+        "results": [
+          {
+            "testId": "t1",
+            "name": "typical_ai_post",
+            "passed": false,
+            "score": 0.823,
+            "output": {
+              "is_ai_ml": true,
+              "status": "relevant",
+              "why_it_matters": "This open-source CLI tool matters because it gives developers a practical, standardized way to score RAG pipelines on faithfulness and recall, addressing the growing need for reliable retrieval evaluation.",
+              "reason": "AI/ML is the core subject (confidence 1)"
+            },
+            "criteria": [
+              {
+                "criterion": "status is exactly 'relevant'",
+                "probability": 0.98,
+                "passed": true
+              },
+              {
+                "criterion": "is_ai_ml is true",
+                "probability": 0.99,
+                "passed": true
+              },
+              {
+                "criterion": "why_it_matters is exactly one sentence under 40 words referencing the RAG evaluation toolkit or retrieval pipelines",
+                "probability": 0.6,
+                "passed": true
+              },
+              {
+                "criterion": "reason is empty",
+                "probability": 0.01,
+                "passed": false
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "status",
+                  "op": "equals",
+                  "value": "relevant"
+                },
+                "passed": true,
+                "actual": "relevant"
+              },
+              {
+                "check": {
+                  "path": "is_ai_ml",
+                  "op": "equals",
+                  "value": true
+                },
+                "passed": true,
+                "actual": true
+              },
+              {
+                "check": {
+                  "path": "why_it_matters",
+                  "op": "contains",
+                  "value": "RAG"
+                },
+                "passed": true,
+                "actual": "This open-source CLI tool matters because it gives developers a practical, standardized way to score RAG pipelines on faithfulness and recall, addressing the growing need for reliable retrieval evaluation."
+              },
+              {
+                "check": {
+                  "path": "why_it_matters",
+                  "op": "maxLength",
+                  "value": 250
+                },
+                "passed": true,
+                "actual": "This open-source CLI tool matters because it gives developers a practical, standardized way to score RAG pipelines on faithfulness and recall, addressing the growing need for reliable retrieval evaluation."
+              }
+            ],
+            "runId": "run_ztAAu6Irs2XQ",
+            "costUsd": 0.000054632,
+            "durationMs": 4977
+          },
+          {
+            "testId": "t2",
+            "name": "typical_non_ai_post",
+            "passed": true,
+            "score": 0.984,
+            "output": {
+              "is_ai_ml": false,
+              "status": "skipped",
+              "why_it_matters": "",
+              "reason": "Not primarily about AI/ML (confidence 1)"
+            },
+            "criteria": [
+              {
+                "criterion": "status is exactly 'skipped'",
+                "probability": 0.98,
+                "passed": true
+              },
+              {
+                "criterion": "is_ai_ml is false",
+                "probability": 0.99,
+                "passed": true
+              },
+              {
+                "criterion": "why_it_matters is empty",
+                "probability": 0.97,
+                "passed": true
+              },
+              {
+                "criterion": "reason explains the exclusion and mentions no AI/ML relevance",
+                "probability": 0.93,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "status",
+                  "op": "equals",
+                  "value": "skipped"
+                },
+                "passed": true,
+                "actual": "skipped"
+              },
+              {
+                "check": {
+                  "path": "is_ai_ml",
+                  "op": "equals",
+                  "value": false
+                },
+                "passed": true,
+                "actual": false
+              },
+              {
+                "check": {
+                  "path": "why_it_matters",
+                  "op": "maxLength",
+                  "value": 0
+                },
+                "passed": true,
+                "actual": ""
+              },
+              {
+                "check": {
+                  "path": "reason",
+                  "op": "minLength",
+                  "value": 1
+                },
+                "passed": true,
+                "actual": "Not primarily about AI/ML (confidence 1)"
+              }
+            ],
+            "runId": "run_QQ9S3UUICspX",
+            "costUsd": 0.000018354,
+            "durationMs": 693
+          },
+          {
+            "testId": "t3",
+            "name": "tricky_ambiguous_tangential_ai_mention",
+            "passed": true,
+            "score": 0.956,
+            "output": {
+              "is_ai_ml": false,
+              "status": "skipped",
+              "why_it_matters": "",
+              "reason": "Not primarily about AI/ML (confidence 1)"
+            },
+            "criteria": [
+              {
+                "criterion": "status is exactly 'relevant' or exactly 'skipped' (either defensible, but one must be chosen)",
+                "probability": 0.98,
+                "passed": true
+              },
+              {
+                "criterion": "is_ai_ml is consistent with status (true iff relevant)",
+                "probability": 0.94,
+                "passed": true
+              },
+              {
+                "criterion": "if relevant, why_it_matters is one sentence under 40 words referencing something concrete from the title or summary (e.g., Rust migration or ML autoscaling)",
+                "probability": 0.81,
+                "passed": true
+              },
+              {
+                "criterion": "if skipped, reason explains the exclusion and why_it_matters is empty",
+                "probability": 0.96,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "status",
+                  "op": "matches",
+                  "value": "^(relevant|skipped)$"
+                },
+                "passed": true,
+                "actual": "skipped"
+              },
+              {
+                "check": {
+                  "path": "why_it_matters",
+                  "op": "maxLength",
+                  "value": 250
+                },
+                "passed": true,
+                "actual": ""
+              },
+              {
+                "check": {
+                  "path": "reason",
+                  "op": "type",
+                  "value": "string"
+                },
+                "passed": true,
+                "actual": "Not primarily about AI/ML (confidence 1)"
+              }
+            ],
+            "runId": "run_Z8mBcncIOSam",
+            "costUsd": 0.000019404,
+            "durationMs": 639
+          }
+        ],
+        "costUsd": 0.00009239,
+        "at": 1790549073215
+      },
+      "buildRunId": "run_J1PaBKAsQwai"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "id": "meeting-notes",
+  "request": "Turn raw meeting notes into a short summary, a list of decisions, and action items with owner and due date when the notes give them. Mark action items that have no owner. Return structured JSON.",
+  "maxBuildUsd": 1
+}

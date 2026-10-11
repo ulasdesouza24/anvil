@@ -1,0 +1,1254 @@
+{
+  "id": "city-weather-briefing",
+  "name": "City Weather Briefing",
+  "description": "Geocodes a city, fetches live current conditions and a 4-day forecast from Open-Meteo, and produces a friendly daily briefing with clothing advice.",
+  "createdAt": 1790547653621,
+  "updatedAt": 1790547653621,
+  "currentVersion": 1,
+  "versions": [
+    {
+      "version": 1,
+      "spec": {
+        "specVersion": "anvil/v1",
+        "id": "city-weather-briefing",
+        "name": "City Weather Briefing",
+        "description": "Geocodes a city, fetches live current conditions and a 4-day forecast from Open-Meteo, and produces a friendly daily briefing with clothing advice.",
+        "version": 1,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string",
+              "description": "City name, optionally with country or region to disambiguate (e.g., 'Paris, France')."
+            },
+            "units": {
+              "type": "string",
+              "description": "Temperature units: 'metric' (°C, km/h) or 'imperial' (°F, mph). Defaults to metric."
+            }
+          },
+          "required": [
+            "city"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "current_conditions": {
+              "type": "object"
+            },
+            "daily_forecast": {
+              "type": "array"
+            },
+            "briefing_text": {
+              "type": "string"
+            },
+            "resolved_location": {
+              "type": "object"
+            },
+            "data_gaps": {
+              "type": "array"
+            },
+            "error": {
+              "type": "string"
+            }
+          }
+        },
+        "nodes": [
+          {
+            "id": "input",
+            "type": "input",
+            "name": "Input",
+            "config": {}
+          },
+          {
+            "id": "geocode",
+            "type": "http",
+            "name": "Geocode city",
+            "description": "Resolve the city name via the Open-Meteo geocoding API, returning candidate matches.",
+            "config": {
+              "method": "GET",
+              "url": "https://geocoding-api.open-meteo.com/v1/search",
+              "query": {
+                "name": "{{input.city}}",
+                "count": "5",
+                "language": "en",
+                "format": "json"
+              },
+              "headers": {
+                "Accept": "application/json"
+              },
+              "timeoutMs": 20000
+            }
+          },
+          {
+            "id": "check_geocode",
+            "type": "router",
+            "name": "Check geocoding results",
+            "description": "If geocoding returned at least one match, continue; otherwise route to the error path.",
+            "config": {
+              "rules": [
+                {
+                  "port": "found",
+                  "when": {
+                    "left": "{{nodes.geocode.output.body.results | length}}",
+                    "op": "gt",
+                    "right": 0
+                  }
+                }
+              ],
+              "default": "default",
+              "mode": "first"
+            }
+          },
+          {
+            "id": "pick_location",
+            "type": "transform",
+            "name": "Pick first match",
+            "description": "Take the first geocoding result so downstream nodes can reference its fields.",
+            "config": {
+              "value": {
+                "match": "{{nodes.geocode.output.body.results | first}}"
+              },
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "match": {
+                    "type": "object",
+                    "properties": {
+                      "latitude": {
+                        "type": "number"
+                      },
+                      "longitude": {
+                        "type": "number"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "country": {
+                        "type": "string"
+                      },
+                      "admin1": {
+                        "type": "string"
+                      },
+                      "population": {
+                        "type": "number"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "id": "fetch_weather",
+            "type": "http",
+            "name": "Fetch weather",
+            "description": "Fetch current conditions and a 4-day daily forecast for the resolved coordinates from Open-Meteo (metric; converted later if imperial).",
+            "config": {
+              "method": "GET",
+              "url": "https://api.open-meteo.com/v1/forecast",
+              "query": {
+                "latitude": "{{nodes.pick_location.output.match.latitude}}",
+                "longitude": "{{nodes.pick_location.output.match.longitude}}",
+                "current": "temperature_2m,weather_code,wind_speed_10m,precipitation",
+                "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max,wind_direction_10m_dominant",
+                "forecast_days": "4",
+                "temperature_unit": "celsius",
+                "wind_speed_unit": "kmh",
+                "timezone": "auto"
+              },
+              "headers": {
+                "Accept": "application/json"
+              },
+              "timeoutMs": 20000
+            }
+          },
+          {
+            "id": "extract_days",
+            "type": "code",
+            "name": "Extract current + 4 days",
+            "description": "Build current_conditions and exactly 4 daily entries from the API response, converting to imperial if requested; missing fields become null so gaps are reported, never invented.",
+            "config": {
+              "code": "const body = nodes.fetch_weather.output.body || {};\nconst imperial = (input.units || 'metric') === 'imperial';\nconst toF = c => Math.round((c * 9) / 5 + 32);\nconst toMph = k => Math.round(k * 0.621371);\nconst convTemp = v => v === null || v === undefined ? null : (imperial ? toF(v) : v);\nconst convWind = v => v === null || v === undefined ? null : (imperial ? toMph(v) : v);\nconst cur = body.current || {};\nconst current_conditions = {\n  temperature: convTemp(cur.temperature_2m !== undefined ? cur.temperature_2m : null),\n  condition: cur.weather_code !== undefined ? String(cur.weather_code) : null,\n  wind_speed: convWind(cur.wind_speed_10m !== undefined ? cur.wind_speed_10m : null),\n  precipitation: cur.precipitation !== undefined ? cur.precipitation : null,\n  time: cur.time !== undefined ? cur.time : null\n};\nconst d = body.daily || {};\nconst dates = d.time || [];\nconst days = dates.slice(0, 4).map((date, i) => ({\n  date: date,\n  temp_min: convTemp(d.temperature_2m_min && d.temperature_2m_min[i] !== undefined ? d.temperature_2m_min[i] : null),\n  temp_max: convTemp(d.temperature_2m_max && d.temperature_2m_max[i] !== undefined ? d.temperature_2m_max[i] : null),\n  precipitation_chance: d.precipitation_probability_max && d.precipitation_probability_max[i] !== undefined && d.precipitation_probability_max[i] !== null ? d.precipitation_probability_max[i] : null,\n  wind_speed: convWind(d.wind_speed_10m_max && d.wind_speed_10m_max[i] !== undefined ? d.wind_speed_10m_max[i] : null),\n  wind_direction: d.wind_direction_10m_dominant && d.wind_direction_10m_dominant[i] !== undefined ? d.wind_direction_10m_dominant[i] : null\n}));\nconst geo = nodes.pick_location.output.match || {};\nreturn {\n  current_conditions: current_conditions,\n  days: days,\n  resolved_location: { name: geo.name || null, country: geo.country || null, admin1: geo.admin1 || null, latitude: geo.latitude || null, longitude: geo.longitude || null, population: geo.population || null }\n};",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "current_conditions": {
+                    "type": "object",
+                    "properties": {
+                      "temperature": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "condition": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "wind_speed": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "precipitation": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "time": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  },
+                  "days": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "date": {
+                          "type": "string"
+                        },
+                        "temp_min": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "temp_max": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "precipitation_chance": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "wind_speed": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "wind_direction": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "resolved_location": {
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "current_conditions",
+                  "days",
+                  "resolved_location"
+                ]
+              }
+            }
+          },
+          {
+            "id": "daily_summaries",
+            "type": "map",
+            "name": "Write daily summaries",
+            "description": "For each of the 4 days, write a 1-2 sentence friendly summary with practical clothing advice consistent with the numbers.",
+            "config": {
+              "items": "{{nodes.extract_days.output.days}}",
+              "mode": "llm",
+              "system": "You are a friendly, practical weather presenter. You never invent numbers — you only use the data given. No emoji, no jargon.",
+              "prompt": "Write a 1-2 sentence friendly summary for this weather forecast day, including at least one concrete clothing or gear recommendation that is consistent with the numbers (e.g., bring an umbrella if precipitation chance is 50% or more, layer up if it is chilly, sunscreen and light clothes if hot and sunny). Use only the given values; if a value is null, do not mention it.\n\nDay data: {{item | json}}\n\nUnits are {{input.units ?? 'metric'}} (metric = °C and km/h, imperial = °F and mph).",
+              "model": "fast",
+              "concurrency": 4
+            }
+          },
+          {
+            "id": "assemble",
+            "type": "transform",
+            "name": "Assemble briefing data",
+            "description": "Combine current conditions, the 4 daily entries, their summaries, and the resolved location into one object for the briefing writer.",
+            "config": {
+              "value": {
+                "location": "{{nodes.extract_days.output.resolved_location}}",
+                "current_conditions": "{{nodes.extract_days.output.current_conditions}}",
+                "days": "{{nodes.extract_days.output.days}}",
+                "summaries": "{{nodes.daily_summaries.output.results}}",
+                "units": "{{input.units ?? 'metric'}}"
+              },
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "location": {
+                    "type": "object"
+                  },
+                  "current_conditions": {
+                    "type": "object"
+                  },
+                  "days": {
+                    "type": "array"
+                  },
+                  "summaries": {
+                    "type": "array"
+                  },
+                  "units": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "location",
+                  "current_conditions",
+                  "days",
+                  "summaries",
+                  "units"
+                ]
+              }
+            }
+          },
+          {
+            "id": "write_briefing",
+            "type": "refine",
+            "name": "Compose briefing",
+            "description": "Write the overall friendly briefing: one line on current conditions plus the per-day summaries, under 200 words, with any data gaps stated explicitly.",
+            "config": {
+              "system": "You are a friendly, practical weather briefing writer. You never invent or alter numbers — you only use the data provided. No emoji, no jargon.",
+              "task": "Compose a short weather briefing from the data below. Structure: one opening line naming the location and summarizing current conditions, then exactly one short sentence (max ~15 words) per day, in order — condense the per-day summaries, do not copy them verbatim. Plain text only: no markdown, no headers, no bold, no bullet symbols. Keep the total under 150 words. If any field in the data is null, state the gap explicitly (e.g., 'wind data unavailable for Tuesday') rather than inventing a value.\n\nLOCATION: {{nodes.assemble.output.location | json}}\nCURRENT CONDITIONS: {{nodes.assemble.output.current_conditions | json}}\nDAYS: {{nodes.assemble.output.days | json}}\nPER-DAY SUMMARIES: {{nodes.assemble.output.summaries | json}}\nUNITS: {{nodes.assemble.output.units}}",
+              "criteria": [
+                "The briefing is under 150 words",
+                "The briefing is plain text with no markdown, headers, or bold formatting",
+                "The briefing opens with a line about current conditions",
+                "The briefing includes one short sentence for each of the 4 days, in order",
+                "The tone is friendly and practical with no jargon",
+                "No numbers appear that are not present in the provided data",
+                "Any null/missing data fields are explicitly stated as gaps"
+              ],
+              "maxIterations": 4,
+              "model": "fast"
+            }
+          },
+          {
+            "id": "validate",
+            "type": "code",
+            "name": "Validate forecast",
+            "description": "Verify exactly 4 daily entries with complete fields, merge in the per-day summaries, and collect any missing-field gaps.",
+            "config": {
+              "code": "const days = nodes.extract_days.output.days || [];\nconst summaries = nodes.daily_summaries.output.results || [];\nconst gaps = [];\nif (days.length !== 4) gaps.push('Expected 4 daily entries but got ' + days.length);\nconst daily_forecast = days.map((d, i) => ({\n  ...d,\n  summary: summaries[i] !== undefined ? summaries[i] : null\n}));\nconst fields = ['date', 'temp_min', 'temp_max', 'precipitation_chance', 'wind_speed'];\nfor (const d of daily_forecast) {\n  for (const f of fields) {\n    if (d[f] === null || d[f] === undefined) gaps.push((d.date || 'unknown date') + ': missing ' + f);\n  }\n  if (d.summary === null || d.summary === undefined) gaps.push((d.date || 'unknown date') + ': missing summary');\n}\nreturn { daily_forecast: daily_forecast, data_gaps: gaps, complete: gaps.length === 0 };",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "daily_forecast": {
+                    "type": "array"
+                  },
+                  "data_gaps": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "complete": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "daily_forecast",
+                  "data_gaps",
+                  "complete"
+                ]
+              }
+            }
+          },
+          {
+            "id": "check_ambiguity",
+            "type": "code",
+            "name": "Check for ambiguous city",
+            "description": "Detect when an unqualified city name matches several distinct locations, so the agent asks for disambiguation instead of silently picking one.",
+            "config": {
+              "code": "const body = (nodes.geocode.output.body || {});\nconst results = body.results || [];\nconst q = (input.city || '').trim();\nconst base = q.split(',')[0].trim().toLowerCase();\nconst hasQualifier = q.includes(',');\nconst matches = results.filter(r => (r.name || '').toLowerCase() === base);\nlet ambiguous = false;\nlet options = [];\nif (!hasQualifier && matches.length > 1) {\n  const regions = new Set(matches.slice(0, 5).map(r => (r.admin1 || '') + '|' + (r.country || '')));\n  if (regions.size > 1) {\n    ambiguous = true;\n    options = matches.slice(0, 5).map(r => ({ label: [r.name, r.admin1, r.country].filter(Boolean).join(', ') }));\n  }\n}\nreturn { ambiguous: ambiguous, options: options };",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ambiguous": {
+                    "type": "boolean"
+                  },
+                  "options": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "label": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "label"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "ambiguous",
+                  "options"
+                ]
+              }
+            }
+          },
+          {
+            "id": "ambiguity_router",
+            "type": "router",
+            "name": "Route on ambiguity",
+            "description": "If the city name is ambiguous, route to the disambiguation error; otherwise continue to the weather fetch.",
+            "config": {
+              "rules": [
+                {
+                  "port": "ambiguous",
+                  "when": {
+                    "left": "{{nodes.check_ambiguity.output.ambiguous}}",
+                    "op": "eq",
+                    "right": true
+                  }
+                }
+              ],
+              "default": "unique",
+              "mode": "first"
+            }
+          },
+          {
+            "id": "error_output",
+            "type": "code",
+            "name": "Error output",
+            "description": "Produce an explicit error message: a disambiguation request (naming the city and candidate regions) when the name is ambiguous, or a not-found message when geocoding failed.",
+            "config": {
+              "code": "const amb = (nodes.check_ambiguity && nodes.check_ambiguity.output) || null;\nif (amb && amb.ambiguous) {\n  const opts = (amb.options || []).map(o => o.label).join(' | ');\n  return { error: \"The city name '\" + input.city + \"' is ambiguous: it matches multiple locations (\" + opts + \"). Please specify a state, region, or country (e.g., '\" + input.city + \", <state or country>') and try again. No forecast was produced.\" };\n}\nreturn { error: \"Could not resolve the city '\" + input.city + \"' to a known location. Please check the spelling or add a country/region (e.g., 'Paris, France') and try again. No forecast was produced.\" };",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "error": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "error"
+                ]
+              }
+            }
+          },
+          {
+            "id": "finalize",
+            "type": "code",
+            "name": "Finalize result",
+            "description": "Assemble the final output object with safe defaults for whichever branch ran (success or geocoding error).",
+            "config": {
+              "code": "const ext = (nodes.extract_days && nodes.extract_days.output) || {};\nconst val = (nodes.validate && nodes.validate.output) || {};\nconst brief = (nodes.write_briefing && nodes.write_briefing.output) || {};\nconst err = (nodes.error_output && nodes.error_output.output) || {};\nreturn {\n  current_conditions: ext.current_conditions !== undefined ? ext.current_conditions : null,\n  daily_forecast: val.daily_forecast !== undefined ? val.daily_forecast : [],\n  briefing_text: brief.text !== undefined ? brief.text : '',\n  resolved_location: ext.resolved_location !== undefined ? ext.resolved_location : null,\n  data_gaps: val.data_gaps !== undefined ? val.data_gaps : [],\n  error: err.error !== undefined ? err.error : ''\n};",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "current_conditions": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "daily_forecast": {
+                    "type": "array"
+                  },
+                  "briefing_text": {
+                    "type": "string"
+                  },
+                  "resolved_location": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "data_gaps": {
+                    "type": "array"
+                  },
+                  "error": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "current_conditions",
+                  "daily_forecast",
+                  "briefing_text",
+                  "resolved_location",
+                  "data_gaps",
+                  "error"
+                ]
+              }
+            }
+          },
+          {
+            "id": "output",
+            "type": "output",
+            "name": "Output",
+            "description": "Final briefing or explicit error message.",
+            "config": {
+              "value": {
+                "current_conditions": "{{nodes.finalize.output.current_conditions}}",
+                "daily_forecast": "{{nodes.finalize.output.daily_forecast}}",
+                "briefing_text": "{{nodes.finalize.output.briefing_text}}",
+                "resolved_location": "{{nodes.finalize.output.resolved_location}}",
+                "data_gaps": "{{nodes.finalize.output.data_gaps}}",
+                "error": "{{nodes.finalize.output.error}}"
+              }
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "input",
+            "to": "geocode"
+          },
+          {
+            "from": "geocode",
+            "to": "check_geocode"
+          },
+          {
+            "from": "check_geocode",
+            "to": "pick_location",
+            "port": "found"
+          },
+          {
+            "from": "check_geocode",
+            "to": "error_output",
+            "port": "default"
+          },
+          {
+            "from": "geocode",
+            "to": "error_output",
+            "port": "error"
+          },
+          {
+            "from": "fetch_weather",
+            "to": "extract_days"
+          },
+          {
+            "from": "fetch_weather",
+            "to": "error_output",
+            "port": "error"
+          },
+          {
+            "from": "extract_days",
+            "to": "daily_summaries"
+          },
+          {
+            "from": "extract_days",
+            "to": "assemble"
+          },
+          {
+            "from": "daily_summaries",
+            "to": "assemble"
+          },
+          {
+            "from": "assemble",
+            "to": "write_briefing"
+          },
+          {
+            "from": "assemble",
+            "to": "validate"
+          },
+          {
+            "from": "write_briefing",
+            "to": "finalize"
+          },
+          {
+            "from": "validate",
+            "to": "finalize"
+          },
+          {
+            "from": "error_output",
+            "to": "finalize"
+          },
+          {
+            "from": "finalize",
+            "to": "output"
+          },
+          {
+            "from": "pick_location",
+            "to": "check_ambiguity"
+          },
+          {
+            "from": "check_ambiguity",
+            "to": "ambiguity_router"
+          },
+          {
+            "from": "ambiguity_router",
+            "to": "fetch_weather",
+            "port": "unique"
+          },
+          {
+            "from": "ambiguity_router",
+            "to": "error_output",
+            "port": "ambiguous"
+          }
+        ],
+        "policy": {
+          "maxCostUsd": 0.5,
+          "maxNodeExecutions": 500,
+          "timeoutMs": 600000,
+          "requireApprovalForSideEffects": false
+        },
+        "tests": [
+          {
+            "id": "t1",
+            "name": "typical_metric_city",
+            "input": {
+              "city": "Lisbon, Portugal",
+              "units": "metric"
+            },
+            "criteria": [
+              "Output contains exactly 4 daily forecast entries, each with a date, min/max temperature, precipitation chance, and wind speed.",
+              "Every daily entry includes at least one clothing or gear recommendation consistent with its numbers (e.g., umbrella when precipitation chance ≥ 50%).",
+              "briefing_text is under 200 words, friendly in tone, and mentions current conditions.",
+              "resolved_location names Lisbon and error is empty."
+            ],
+            "checks": [
+              {
+                "path": "daily_forecast",
+                "op": "type",
+                "value": "array"
+              },
+              {
+                "path": "daily_forecast",
+                "op": "maxLength",
+                "value": 4
+              },
+              {
+                "path": "error",
+                "op": "equals",
+                "value": ""
+              },
+              {
+                "path": "briefing_text",
+                "op": "contains",
+                "value": "Lisbon"
+              }
+            ]
+          },
+          {
+            "id": "t2",
+            "name": "imperial_units_ambiguous_city",
+            "input": {
+              "city": "Springfield",
+              "units": "imperial"
+            },
+            "criteria": [
+              "Because 'Springfield' is ambiguous, the output is an explicit error message naming the ambiguity problem, not a fabricated forecast.",
+              "The error message names the city 'Springfield' and asks for disambiguation (e.g., state or country).",
+              "daily_forecast is empty or absent, and briefing_text does not contain invented temperatures or forecasts."
+            ],
+            "checks": [
+              {
+                "path": "error",
+                "op": "contains",
+                "value": "Springfield"
+              },
+              {
+                "path": "daily_forecast",
+                "op": "maxLength",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "id": "t3",
+            "name": "adversarial_nonexistent_city",
+            "input": {
+              "city": "Atlantis, Pacific Ocean"
+            },
+            "criteria": [
+              "The output is an explicit error message stating the city could not be geocoded/resolved, not a fabricated forecast.",
+              "The error message names the unresolved city string 'Atlantis, Pacific Ocean'.",
+              "No daily_forecast entries, current_conditions, or briefing_text with weather numbers are produced."
+            ],
+            "checks": [
+              {
+                "path": "error",
+                "op": "contains",
+                "value": "Atlantis"
+              },
+              {
+                "path": "daily_forecast",
+                "op": "maxLength",
+                "value": 0
+              },
+              {
+                "path": "briefing_text",
+                "op": "maxLength",
+                "value": 0
+              }
+            ]
+          }
+        ],
+        "meta": {
+          "builtBy": "anvil-builder",
+          "request": "Given a city name, get the current weather and the next 3 days of forecast (temperature min/max, precipitation chance, wind) and write a short friendly summary with clothing advice for each day.",
+          "taskSpec": {
+            "name": "City Weather Briefing",
+            "agentId": "city-weather-briefing",
+            "summary": "Fetches current conditions and a 3-day forecast for a given city and produces a friendly daily summary with clothing advice.",
+            "goal": "For any given city, deliver an accurate, readable weather briefing covering today plus the next 3 days, each with min/max temperature, precipitation chance, wind, and practical clothing advice.",
+            "inputs": [
+              {
+                "name": "city",
+                "type": "string",
+                "description": "City name, optionally with country or region to disambiguate (e.g., 'Paris, France').",
+                "required": true,
+                "example": "Lisbon, Portugal"
+              },
+              {
+                "name": "units",
+                "type": "string",
+                "description": "Temperature units: 'metric' (°C, km/h) or 'imperial' (°F, mph). Defaults to metric.",
+                "required": false,
+                "example": "metric"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "current_conditions",
+                "type": "object",
+                "description": "Current temperature, condition (e.g., 'light rain'), wind speed, and precipitation status for the city."
+              },
+              {
+                "name": "daily_forecast",
+                "type": "array",
+                "description": "Exactly 3 entries (today + next 2 days, or next 3 days per interpretation below), each with date, min/max temperature, precipitation chance (%), wind speed/direction, and a one-to-two-sentence friendly summary with clothing advice."
+              },
+              {
+                "name": "briefing_text",
+                "type": "string",
+                "description": "A short friendly prose briefing combining current conditions and the daily summaries with clothing advice."
+              }
+            ],
+            "steps": [
+              "Resolve the city name to a specific location (geocoding), preferring the most populous match if ambiguous; note the resolved location in the output.",
+              "Fetch current weather conditions for the resolved location from a weather API.",
+              "Fetch the daily forecast covering today plus the next 3 days.",
+              "Extract for each day: date, min/max temperature, precipitation chance, and wind speed/direction, converting units if 'imperial' was requested.",
+              "For each day, write a one-to-two-sentence friendly summary including practical clothing advice (e.g., 'bring an umbrella', 'layer up, chilly morning').",
+              "Compose the overall briefing_text: one line on current conditions, then the per-day summaries.",
+              "Validate that all 4 days have complete data; if any field is missing from the API, state the gap explicitly rather than inventing values."
+            ],
+            "constraints": [
+              "Use live weather data from a reputable API; never fabricate temperatures, percentages, or wind values.",
+              "Always include exactly 4 days (today + next 3) unless the API cannot provide them, in which case say so.",
+              "Keep each daily summary to 1–2 sentences; total briefing under ~200 words.",
+              "Tone: friendly and practical, no jargon, no emoji required.",
+              "If the city cannot be resolved or has no forecast data, return a clear error message instead of guessing.",
+              "Default to metric units unless 'imperial' is specified."
+            ],
+            "successCriteria": [
+              "Output contains exactly 4 daily entries, each with a date, min and max temperature, precipitation chance, and wind speed.",
+              "Every daily entry includes at least one concrete clothing or gear recommendation that is consistent with the reported numbers (e.g., umbrella advice when precipitation chance ≥ 50%).",
+              "All numeric values match the source API data (no invented or rounded-beyond-reasonable figures).",
+              "briefing_text is under 200 words, friendly in tone, and mentions current conditions.",
+              "If the city is ambiguous or unresolved, the output is an explicit error message naming the problem, not a fabricated forecast."
+            ],
+            "assumptions": [
+              "'Next 3 days' is interpreted as today plus the following 3 days (4 daily entries total), anchored to the location's local timezone.",
+              "Metric units (°C, km/h, mm) are the default.",
+              "A single weather API (e.g., Open-Meteo or OpenWeatherMap) is available without per-call configuration.",
+              "Precipitation chance is expressed as a daily maximum probability percentage.",
+              "No historical data, alerts, or hourly breakdowns are needed."
+            ],
+            "clarifyingQuestions": [
+              "Should 'next 3 days' include today (4 entries) or start tomorrow (3 entries)? The spec assumes today is included."
+            ],
+            "exampleInputs": [
+              {
+                "city": "Lisbon, Portugal",
+                "units": "metric"
+              },
+              {
+                "city": "Chicago"
+              },
+              {
+                "city": "Reykjavik, Iceland",
+                "units": "imperial"
+              }
+            ]
+          },
+          "plan": {
+            "pattern": "pipeline",
+            "rationale": "Fixed deterministic flow: geocode → fetch live weather → compute/extract 4 days → per-day friendly summaries (map) → compose briefing (refine for the quality bar) → validate completeness. All numbers come straight from Open-Meteo; LLMs only write prose, never data.",
+            "steps": [
+              {
+                "id": "geocode",
+                "type": "http",
+                "purpose": "Resolve {{input.city}} via Open-Meteo geocoding API (https://geocoding-api.open-meteo.com/v1/search?name=...&count=5&language=en), picking the most populous match; returns latitude, longitude, name, country.",
+                "dependsOn": []
+              },
+              {
+                "id": "check_geocode",
+                "type": "router",
+                "purpose": "If geocode returned no results, route to error output instead of guessing.",
+                "dependsOn": [
+                  "geocode"
+                ]
+              },
+              {
+                "id": "fetch_weather",
+                "type": "http",
+                "purpose": "Fetch current + daily forecast from Open-Meteo (https://api.open-meteo.com/v1/forecast?latitude=...&longitude=...&current=temperature_2m,weather_code,wind_speed_10m,precipitation&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max,wind_direction_10m_dominant&forecast_days=4&temperature_unit={{input.units ?? 'metric'}}, wind speed unit accordingly, timezone=auto).",
+                "dependsOn": [
+                  "geocode"
+                ],
+                "branch": {
+                  "from": "check_geocode",
+                  "port": "default"
+                }
+              },
+              {
+                "id": "extract_days",
+                "type": "code",
+                "purpose": "Build current_conditions object and an array of exactly 4 daily entries (date, min/max temp, precipitation chance, wind speed/direction) from the API response; flag any missing fields as null so gaps are reported, never invented.",
+                "dependsOn": [
+                  "fetch_weather"
+                ]
+              },
+              {
+                "id": "daily_summaries",
+                "type": "map",
+                "mode": "llm",
+                "purpose": "For each of the 4 days, write a 1–2 sentence friendly summary with practical clothing advice consistent with the numbers (umbrella if precip ≥50%, layers if cold, etc.).",
+                "dependsOn": [
+                  "extract_days"
+                ],
+                "model": "fast"
+              },
+              {
+                "id": "assemble",
+                "type": "transform",
+                "purpose": "Combine current_conditions, the 4 daily entries with their summaries, and the resolved location into one object for the briefing writer.",
+                "dependsOn": [
+                  "extract_days",
+                  "daily_summaries"
+                ]
+              },
+              {
+                "id": "write_briefing",
+                "type": "refine",
+                "purpose": "Compose briefing_text: one line on current conditions plus the per-day summaries; criteria: under 200 words, friendly practical tone, mentions current conditions, no invented numbers, states any data gaps explicitly.",
+                "dependsOn": [
+                  "assemble"
+                ],
+                "model": "fast"
+              },
+              {
+                "id": "validate",
+                "type": "code",
+                "purpose": "Verify exactly 4 daily entries each with date, min/max, precipitation chance, wind speed; collect any missing-field gaps to surface in the output.",
+                "dependsOn": [
+                  "assemble"
+                ]
+              }
+            ],
+            "output": "current_conditions (from extract_days), daily_forecast (array of 4 entries with date, min/max temp, precipitation chance, wind speed/direction, and summary from daily_summaries), briefing_text (from write_briefing), resolved_location (from geocode), data_gaps (from validate, empty when complete). If geocoding fails, output is an explicit error message naming the unresolved city.",
+            "newClasses": []
+          },
+          "pattern": "pipeline",
+          "compile": [
+            {
+              "attempt": 0,
+              "strategy": "autofix",
+              "errors": 2,
+              "warnings": 0
+            },
+            {
+              "attempt": 1,
+              "strategy": "patch",
+              "errors": 3,
+              "warnings": 1
+            },
+            {
+              "attempt": 2,
+              "strategy": "rewrite",
+              "errors": 2,
+              "warnings": 0
+            },
+            {
+              "attempt": 3,
+              "strategy": "rewrite",
+              "errors": 0,
+              "warnings": 0
+            }
+          ],
+          "evolution": [
+            {
+              "round": 0,
+              "score": 0.57,
+              "passRate": 0.333,
+              "accepted": true,
+              "change": "initial build"
+            },
+            {
+              "round": 1,
+              "score": 0.965,
+              "passRate": 0.667,
+              "accepted": true,
+              "change": "write_briefing task now injects nodes.assemble.output.location/current_conditions/days/summaries/units directly instead of the nonexistent .value field, and asks the briefing to name the location; assemble transform now declares a schema so its fields are typed and referenceable downstream; new check_ambiguity code node: if the input has no qualifier (no comma) and multiple geocoding results share the queried base name across different regions/countries, flag ambiguous with human-readable options; new ambiguity_router: port 'ambiguous' → error_output, default 'unique' → fetch_weather; error_output converted to a code node that emits a disambiguation error (naming the city and listing candidate regions) when ambiguous, else the original not-found message; edges rewired: pick_location → check_ambiguity → ambiguity_router → fetch_weather / error_output; removed direct pick_location → fetch_weather edge"
+            },
+            {
+              "round": 2,
+              "score": 0.983,
+              "passRate": 1,
+              "accepted": true,
+              "change": "Rewrite write_briefing task: plain text (no markdown/headers/bold), condense each day to one short sentence instead of copying the summaries verbatim, target under 150 words.; Update write_briefing criteria to enforce the tighter length, plain-text formatting, and one-sentence-per-day structure.; Bump write_briefing maxIterations to 4 so the loop has room to trim to the tighter bar."
+            }
+          ],
+          "taxonomy": {
+            "pattern": "pipeline",
+            "domain": "weather_climate",
+            "sourceKind": "api",
+            "outputKind": "report"
+          }
+        }
+      },
+      "createdAt": 1790547653621,
+      "note": "built by Anvil",
+      "score": 0.983,
+      "evaluation": {
+        "version": 1,
+        "passRate": 1,
+        "score": 0.983,
+        "results": [
+          {
+            "testId": "t1",
+            "name": "typical_metric_city",
+            "passed": true,
+            "score": 0.976,
+            "output": {
+              "current_conditions": {
+                "temperature": 21.5,
+                "condition": "1",
+                "wind_speed": 2.9,
+                "precipitation": 0,
+                "time": "2026-09-27T23:15"
+              },
+              "daily_forecast": [
+                {
+                  "date": "2026-09-27",
+                  "temp_min": 20.9,
+                  "temp_max": 28.2,
+                  "precipitation_chance": 0,
+                  "wind_speed": 16.6,
+                  "wind_direction": 343,
+                  "summary": "A warm, dry day ahead with temperatures between 20.9 and 28.2°C and no rain expected, though winds will be noticeable at 16.6 km/h — light clothing should be comfortable, and maybe secure your hat against the breeze."
+                },
+                {
+                  "date": "2026-09-28",
+                  "temp_min": 18.6,
+                  "temp_max": 27.2,
+                  "precipitation_chance": 10,
+                  "wind_speed": 11.3,
+                  "wind_direction": 205,
+                  "summary": "A pleasant Monday with a low of 18.6°C warming to 27.2°C and only a 10% chance of rain, so light clothing and sunglasses should serve you well. Winds are a gentle 11.3 km/h from the south-southwest."
+                },
+                {
+                  "date": "2026-09-29",
+                  "temp_min": 20.1,
+                  "temp_max": 23.3,
+                  "precipitation_chance": 65,
+                  "wind_speed": 27.7,
+                  "wind_direction": 187,
+                  "summary": "A mild day around 20 to 23 degrees, but with a 65 percent chance of rain and winds near 28 km/h, so definitely grab an umbrella and maybe a light rain jacket before heading out."
+                },
+                {
+                  "date": "2026-09-30",
+                  "temp_min": 18.2,
+                  "temp_max": 24.4,
+                  "precipitation_chance": 88,
+                  "wind_speed": 16.9,
+                  "wind_direction": 301,
+                  "summary": "A wet and breezy Wednesday ahead, with a high of 24.4°C, an 88% chance of rain, and winds around 17 km/h — definitely pack an umbrella and a light rain jacket."
+                }
+              ],
+              "briefing_text": "Lisbon, Portugal: currently 21.5°C and dry with light winds.\n\nSunday looks warm and dry, reaching 28.2°C, though winds of 16.6 km/h may ruffle your hat. Monday stays pleasant with a high of 27.2°C and just a 10% rain chance. Tuesday turns unsettled, with a 65% chance of rain and stronger winds of 27.7 km/h, so bring an umbrella. Wednesday looks wet and breezy, with an 88% chance of rain and a high of 24.4°C — pack a rain jacket.\n\nNo data gaps to report; all fields were provided.",
+              "resolved_location": {
+                "name": "Lisbon",
+                "country": "Portugal",
+                "admin1": "Lisbon District",
+                "latitude": 38.72509,
+                "longitude": -9.1498,
+                "population": 517802
+              },
+              "data_gaps": [],
+              "error": ""
+            },
+            "criteria": [
+              {
+                "criterion": "Output contains exactly 4 daily forecast entries, each with a date, min/max temperature, precipitation chance, and wind speed.",
+                "probability": 0.94,
+                "passed": true
+              },
+              {
+                "criterion": "Every daily entry includes at least one clothing or gear recommendation consistent with its numbers (e.g., umbrella when precipitation chance ≥ 50%).",
+                "probability": 0.94,
+                "passed": true
+              },
+              {
+                "criterion": "briefing_text is under 200 words, friendly in tone, and mentions current conditions.",
+                "probability": 0.94,
+                "passed": true
+              },
+              {
+                "criterion": "resolved_location names Lisbon and error is empty.",
+                "probability": 0.99,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "daily_forecast",
+                  "op": "type",
+                  "value": "array"
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "date": "2026-09-27",
+                    "temp_min": 20.9,
+                    "temp_max": 28.2,
+                    "precipitation_chance": 0,
+                    "wind_speed": 16.6,
+                    "wind_direction": 343,
+                    "summary": "A warm, dry day ahead with temperatures between 20.9 and 28.2°C and no rain expected, though winds will be noticeable at 16.6 km/h — light clothing should be comfortable, and maybe secure your hat against the breeze."
+                  },
+                  {
+                    "date": "2026-09-28",
+                    "temp_min": 18.6,
+                    "temp_max": 27.2,
+                    "precipitation_chance": 10,
+                    "wind_speed": 11.3,
+                    "wind_direction": 205,
+                    "summary": "A pleasant Monday with a low of 18.6°C warming to 27.2°C and only a 10% chance of rain, so light clothing and sunglasses should serve you well. Winds are a gentle 11.3 km/h from the south-southwest."
+                  },
+                  {
+                    "date": "2026-09-29",
+                    "temp_min": 20.1,
+                    "temp_max": 23.3,
+                    "precipitation_chance": 65,
+                    "wind_speed": 27.7,
+                    "wind_direction": 187,
+                    "summary": "A mild day around 20 to 23 degrees, but with a 65 percent chance of rain and winds near 28 km/h, so definitely grab an umbrella and maybe a light rain jacket before heading out."
+                  },
+                  {
+                    "date": "2026-09-30",
+                    "temp_min": 18.2,
+                    "temp_max": 24.4,
+                    "precipitation_chance": 88,
+                    "wind_speed": 16.9,
+                    "wind_direction": 301,
+                    "summary": "A wet and breezy Wednesday ahead, with a high of 24.4°C, an 88% chance of rain, and winds around 17 km/h — definitely pack an umbrella and a light rain jacket."
+                  }
+                ]
+              },
+              {
+                "check": {
+                  "path": "daily_forecast",
+                  "op": "maxLength",
+                  "value": 4
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "date": "2026-09-27",
+                    "temp_min": 20.9,
+                    "temp_max": 28.2,
+                    "precipitation_chance": 0,
+                    "wind_speed": 16.6,
+                    "wind_direction": 343,
+                    "summary": "A warm, dry day ahead with temperatures between 20.9 and 28.2°C and no rain expected, though winds will be noticeable at 16.6 km/h — light clothing should be comfortable, and maybe secure your hat against the breeze."
+                  },
+                  {
+                    "date": "2026-09-28",
+                    "temp_min": 18.6,
+                    "temp_max": 27.2,
+                    "precipitation_chance": 10,
+                    "wind_speed": 11.3,
+                    "wind_direction": 205,
+                    "summary": "A pleasant Monday with a low of 18.6°C warming to 27.2°C and only a 10% chance of rain, so light clothing and sunglasses should serve you well. Winds are a gentle 11.3 km/h from the south-southwest."
+                  },
+                  {
+                    "date": "2026-09-29",
+                    "temp_min": 20.1,
+                    "temp_max": 23.3,
+                    "precipitation_chance": 65,
+                    "wind_speed": 27.7,
+                    "wind_direction": 187,
+                    "summary": "A mild day around 20 to 23 degrees, but with a 65 percent chance of rain and winds near 28 km/h, so definitely grab an umbrella and maybe a light rain jacket before heading out."
+                  },
+                  {
+                    "date": "2026-09-30",
+                    "temp_min": 18.2,
+                    "temp_max": 24.4,
+                    "precipitation_chance": 88,
+                    "wind_speed": 16.9,
+                    "wind_direction": 301,
+                    "summary": "A wet and breezy Wednesday ahead, with a high of 24.4°C, an 88% chance of rain, and winds around 17 km/h — definitely pack an umbrella and a light rain jacket."
+                  }
+                ]
+              },
+              {
+                "check": {
+                  "path": "error",
+                  "op": "equals",
+                  "value": ""
+                },
+                "passed": true,
+                "actual": ""
+              },
+              {
+                "check": {
+                  "path": "briefing_text",
+                  "op": "contains",
+                  "value": "Lisbon"
+                },
+                "passed": true,
+                "actual": "Lisbon, Portugal: currently 21.5°C and dry with light winds.\n\nSunday looks warm and dry, reaching 28.2°C, though winds of 16.6 km/h may ruffle your hat. Monday stays pleasant with a high of 27.2°C and just a 10% rain chance. Tuesday turns unsettled, with a 65% chance of rain and stronger winds of 27…"
+              }
+            ],
+            "runId": "run_weH5_m9k8sa1",
+            "costUsd": 0.001128042,
+            "durationMs": 19993
+          },
+          {
+            "testId": "t2",
+            "name": "imperial_units_ambiguous_city",
+            "passed": true,
+            "score": 0.986,
+            "output": {
+              "current_conditions": null,
+              "daily_forecast": [],
+              "briefing_text": "",
+              "resolved_location": null,
+              "data_gaps": [],
+              "error": "The city name 'Springfield' is ambiguous: it matches multiple locations (Springfield, Missouri, United States | Springfield, Illinois, United States | Springfield, Massachusetts, United States | Springfield, Ohio, United States | Springfield, Tennessee, United States). Please specify a state, region, or country (e.g., 'Springfield, <state or country>') and try again. No forecast was produced."
+            },
+            "criteria": [
+              {
+                "criterion": "Because 'Springfield' is ambiguous, the output is an explicit error message naming the ambiguity problem, not a fabricated forecast.",
+                "probability": 0.97,
+                "passed": true
+              },
+              {
+                "criterion": "The error message names the city 'Springfield' and asks for disambiguation (e.g., state or country).",
+                "probability": 0.98,
+                "passed": true
+              },
+              {
+                "criterion": "daily_forecast is empty or absent, and briefing_text does not contain invented temperatures or forecasts.",
+                "probability": 0.98,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "error",
+                  "op": "contains",
+                  "value": "Springfield"
+                },
+                "passed": true,
+                "actual": "The city name 'Springfield' is ambiguous: it matches multiple locations (Springfield, Missouri, United States | Springfield, Illinois, United States | Springfield, Massachusetts, United States | Springfield, Ohio, United States | Springfield, Tennessee, United States). Please specify a state, region…"
+              },
+              {
+                "check": {
+                  "path": "daily_forecast",
+                  "op": "maxLength",
+                  "value": 0
+                },
+                "passed": true,
+                "actual": []
+              }
+            ],
+            "runId": "run_Yn3BzGUwzWxg",
+            "costUsd": 0,
+            "durationMs": 570
+          },
+          {
+            "testId": "t3",
+            "name": "adversarial_nonexistent_city",
+            "passed": true,
+            "score": 0.987,
+            "output": {
+              "current_conditions": null,
+              "daily_forecast": [],
+              "briefing_text": "",
+              "resolved_location": null,
+              "data_gaps": [],
+              "error": "Could not resolve the city 'Atlantis, Pacific Ocean' to a known location. Please check the spelling or add a country/region (e.g., 'Paris, France') and try again. No forecast was produced."
+            },
+            "criteria": [
+              {
+                "criterion": "The output is an explicit error message stating the city could not be geocoded/resolved, not a fabricated forecast.",
+                "probability": 0.97,
+                "passed": true
+              },
+              {
+                "criterion": "The error message names the unresolved city string 'Atlantis, Pacific Ocean'.",
+                "probability": 0.98,
+                "passed": true
+              },
+              {
+                "criterion": "No daily_forecast entries, current_conditions, or briefing_text with weather numbers are produced.",
+                "probability": 0.97,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "error",
+                  "op": "contains",
+                  "value": "Atlantis"
+                },
+                "passed": true,
+                "actual": "Could not resolve the city 'Atlantis, Pacific Ocean' to a known location. Please check the spelling or add a country/region (e.g., 'Paris, France') and try again. No forecast was produced."
+              },
+              {
+                "check": {
+                  "path": "daily_forecast",
+                  "op": "maxLength",
+                  "value": 0
+                },
+                "passed": true,
+                "actual": []
+              },
+              {
+                "check": {
+                  "path": "briefing_text",
+                  "op": "maxLength",
+                  "value": 0
+                },
+                "passed": true,
+                "actual": ""
+              }
+            ],
+            "runId": "run_1XBQi1cKEsl6",
+            "costUsd": 0,
+            "durationMs": 658
+          }
+        ],
+        "costUsd": 0.001128042,
+        "at": 1790547653618
+      },
+      "buildRunId": "run_fTWbth25vRfW"
+    }
+  ]
+}

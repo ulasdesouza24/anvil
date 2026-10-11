@@ -1,0 +1,1185 @@
+{
+  "id": "lead-scorer-router",
+  "name": "Lead Scorer & Router",
+  "description": "Scores inbound B2B contact-form leads 0-100 with transparent weights, estimates company size and developer-tools fit, and routes hot leads to a personalized reply draft or cold leads to a nurture tag.",
+  "createdAt": 1790531923446,
+  "updatedAt": 1790531923446,
+  "currentVersion": 1,
+  "versions": [
+    {
+      "version": 1,
+      "spec": {
+        "specVersion": "anvil/v1",
+        "id": "lead-scorer-router",
+        "name": "Lead Scorer & Router",
+        "description": "Scores inbound B2B contact-form leads 0-100 with transparent weights, estimates company size and developer-tools fit, and routes hot leads to a personalized reply draft or cold leads to a nurture tag.",
+        "version": 1,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "lead_name": {
+              "type": "string",
+              "description": "Full name of the person who submitted the contact form."
+            },
+            "company": {
+              "type": "string",
+              "description": "Company name as entered on the form."
+            },
+            "role": {
+              "type": "string",
+              "description": "Job title or role as entered on the form; may be blank or free-text."
+            },
+            "message": {
+              "type": "string",
+              "description": "Free-text message from the form describing their need or interest."
+            }
+          },
+          "required": [
+            "lead_name",
+            "company",
+            "role",
+            "message"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "lead_score": {
+              "type": "number"
+            },
+            "score_breakdown": {
+              "type": "object"
+            },
+            "company_size_estimate": {
+              "type": "object"
+            },
+            "fit_assessment": {
+              "type": "string"
+            },
+            "route": {
+              "type": "string",
+              "enum": [
+                "hot",
+                "warm",
+                "cold"
+              ]
+            },
+            "reply_draft": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "nurture_tag": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "nodes": [
+          {
+            "id": "input",
+            "type": "input",
+            "name": "Input",
+            "description": "Contact-form submission fields.",
+            "config": {}
+          },
+          {
+            "id": "normalize",
+            "type": "transform",
+            "name": "Normalize fields",
+            "description": "Trim whitespace and infer missing role as 'unspecified'.",
+            "config": {
+              "value": {
+                "lead_name": "{{input.lead_name | trim}}",
+                "company": "{{input.company | trim}}",
+                "role": "{{input.role | trim}}",
+                "message": "{{input.message | trim}}"
+              },
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "lead_name": {
+                    "type": "string"
+                  },
+                  "company": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "lead_name",
+                  "company",
+                  "role",
+                  "message"
+                ]
+              }
+            }
+          },
+          {
+            "id": "assess",
+            "type": "llm_structured",
+            "name": "Assess lead",
+            "description": "Estimate team size band with quoted evidence, write fit assessment, and score the four weighted components 0-100 with cited evidence.",
+            "config": {
+              "system": "You are a rigorous B2B lead-qualification analyst for a developer-tools product. The ICP is engineering leaders at companies with 11-200 engineers. You never fabricate company facts (headcount, funding) that are not inferable from the inputs; every estimate must be labeled as an estimate and justified with quoted evidence from the submitted fields. Every component score must be justified by citing the input text.",
+              "prompt": "Score this contact-form lead.\n\nLEAD NAME: {{nodes.normalize.output.lead_name}}\nCOMPANY: {{nodes.normalize.output.company}}\nROLE: {{nodes.normalize.output.role}}\nMESSAGE: {{nodes.normalize.output.message}}\n\n1) size_band: estimate the engineering team size band from explicit signals in the message (e.g. 'team of ~40 devs') and role seniority. One of: '1-10', '11-50', '51-200', '200+'. Quote the exact input phrases you relied on in size_evidence. If there is no explicit signal, give your best estimate and prefix the evidence with 'estimate based on: '.\n2) fit_assessment: 2-3 sentence narrative on how well the lead fits the developer-tools ICP, hedged appropriately.\n3) Component scores, each an integer 0-100 with a one-line evidence citation:\n   - role_seniority: 100 VP/C-level/Head of; 70 Director/Principal/Staff; 50 Senior/Lead; 30 IC engineer; 10 student/non-technical/unspecified.\n   - company_size_fit: 100 for 51-200 engineers; 80 for 11-50; 60 for 200+; 30 for 1-10.\n   - message_intent: 100 explicit evaluation/purchase timeline; 70 active evaluation without timeline; 40 general interest; 10 vague or unrelated.\n   - use_case_fit: 100 use case directly matching core developer-tooling capabilities; 50 adjacent; 10 no discernible fit.",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "size_band": {
+                    "type": "string",
+                    "enum": [
+                      "1-10",
+                      "11-50",
+                      "51-200",
+                      "200+"
+                    ]
+                  },
+                  "size_evidence": {
+                    "type": "string"
+                  },
+                  "fit_assessment": {
+                    "type": "string"
+                  },
+                  "role_seniority": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "role_seniority_evidence": {
+                    "type": "string"
+                  },
+                  "company_size_fit": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "company_size_fit_evidence": {
+                    "type": "string"
+                  },
+                  "message_intent": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "message_intent_evidence": {
+                    "type": "string"
+                  },
+                  "use_case_fit": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "use_case_fit_evidence": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "size_band",
+                  "size_evidence",
+                  "fit_assessment",
+                  "role_seniority",
+                  "role_seniority_evidence",
+                  "company_size_fit",
+                  "company_size_fit_evidence",
+                  "message_intent",
+                  "message_intent_evidence",
+                  "use_case_fit",
+                  "use_case_fit_evidence"
+                ]
+              },
+              "model": "balanced",
+              "temperature": 0
+            }
+          },
+          {
+            "id": "compute_score",
+            "type": "code",
+            "name": "Compute weighted score",
+            "description": "Compute lead_score as the exact weighted sum and build the transparent score breakdown.",
+            "config": {
+              "code": "const a = nodes.assess.output;\nconst clamp = (n) => Math.max(0, Math.min(100, Math.round(n)));\nconst role = clamp(a.role_seniority);\nconst size = clamp(a.company_size_fit);\nconst intent = clamp(a.message_intent);\nconst fit = clamp(a.use_case_fit);\nconst weighted = role * 0.30 + size * 0.25 + intent * 0.25 + fit * 0.20;\nconst lead_score = clamp(weighted);\nreturn {\n  lead_score,\n  score_breakdown: {\n    role_seniority: { weight: 30, raw: role, weighted_contribution: Math.round(role * 0.30 * 100) / 100, evidence: a.role_seniority_evidence },\n    company_size_fit: { weight: 25, raw: size, weighted_contribution: Math.round(size * 0.25 * 100) / 100, evidence: a.company_size_fit_evidence },\n    message_intent: { weight: 25, raw: intent, weighted_contribution: Math.round(intent * 0.25 * 100) / 100, evidence: a.message_intent_evidence },\n    use_case_fit: { weight: 20, raw: fit, weighted_contribution: Math.round(fit * 0.20 * 100) / 100, evidence: a.use_case_fit_evidence }\n  }\n};",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "lead_score": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "score_breakdown": {
+                    "type": "object",
+                    "properties": {
+                      "role_seniority": {
+                        "type": "object"
+                      },
+                      "company_size_fit": {
+                        "type": "object"
+                      },
+                      "message_intent": {
+                        "type": "object"
+                      },
+                      "use_case_fit": {
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "role_seniority",
+                      "company_size_fit",
+                      "message_intent",
+                      "use_case_fit"
+                    ]
+                  }
+                },
+                "required": [
+                  "lead_score",
+                  "score_breakdown"
+                ]
+              }
+            }
+          },
+          {
+            "id": "route_lead",
+            "type": "router",
+            "name": "Route by score",
+            "description": "Deterministic threshold routing: hot >= 70, warm 40-69, cold < 40.",
+            "config": {
+              "rules": [
+                {
+                  "port": "hot",
+                  "when": {
+                    "left": "{{nodes.compute_score.output.lead_score}}",
+                    "op": "gte",
+                    "right": 70
+                  }
+                },
+                {
+                  "port": "warm",
+                  "when": {
+                    "left": "{{nodes.compute_score.output.lead_score}}",
+                    "op": "gte",
+                    "right": 40
+                  }
+                }
+              ],
+              "default": "cold",
+              "mode": "first"
+            }
+          },
+          {
+            "id": "draft_reply",
+            "type": "refine",
+            "name": "Draft personalized reply",
+            "description": "For hot leads: a personalized reply email with a concrete next step, checked against quality criteria.",
+            "config": {
+              "system": "You are a concise B2B sales representative for a developer-tools product. Write professional, specific emails. Use only the information provided; never invent company facts. Do not include any PII beyond the submitted fields (no email addresses, phone numbers).",
+              "task": "Write a personalized reply email to this hot lead (score {{nodes.compute_score.output.lead_score}}/100).\n\nLEAD NAME: {{nodes.normalize.output.lead_name}}\nCOMPANY: {{nodes.normalize.output.company}}\nROLE: {{nodes.normalize.output.role}}\nTHEIR MESSAGE: {{nodes.normalize.output.message}}\n\nReference their name, company, role, and their stated need. End with a concrete suggested next step (e.g., a short call or a trial). Sign off simply as 'The team'.",
+              "criteria": [
+                "The reply is under 150 words",
+                "The reply references the lead's name and at least two personalized details from their submission (company, role, or stated need)",
+                "The reply proposes a concrete next step",
+                "The reply contains no PII beyond the submitted fields and no fabricated company facts"
+              ],
+              "maxIterations": 3,
+              "model": "fast"
+            }
+          },
+          {
+            "id": "nurture_tag",
+            "type": "llm_structured",
+            "name": "Assign nurture tag",
+            "description": "For cold leads: a nurture tag reflecting the dominant reason for the low score.",
+            "config": {
+              "system": "You tag cold B2B leads for a nurture campaign. Use only the provided information.",
+              "prompt": "This lead scored {{nodes.compute_score.output.lead_score}}/100 (cold). Score breakdown: {{nodes.compute_score.output.score_breakdown | json}}\n\nLEAD NAME: {{nodes.normalize.output.lead_name}}\nROLE: {{nodes.normalize.output.role}}\nCOMPANY: {{nodes.normalize.output.company}}\nMESSAGE: {{nodes.normalize.output.message}}\n\nPick the single dominant reason for the low score and return a tag from: 'nurture:non-technical', 'nurture:early-stage', 'nurture:no-intent', 'nurture:too-small', 'nurture:poor-fit'. Justify in one line citing the input.",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "tag": {
+                    "type": "string",
+                    "enum": [
+                      "nurture:non-technical",
+                      "nurture:early-stage",
+                      "nurture:no-intent",
+                      "nurture:too-small",
+                      "nurture:poor-fit"
+                    ]
+                  },
+                  "justification": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "tag",
+                  "justification"
+                ]
+              },
+              "model": "fast",
+              "temperature": 0
+            }
+          },
+          {
+            "id": "warm_note",
+            "type": "llm_structured",
+            "name": "Warm follow-up note",
+            "description": "For warm leads: an optional light nurture tag summarizing the follow-up angle for human review.",
+            "config": {
+              "system": "You summarize warm B2B leads for human review. Use only the provided information.",
+              "prompt": "This lead scored {{nodes.compute_score.output.lead_score}}/100 (warm) and will be reviewed by a human. Score breakdown: {{nodes.compute_score.output.score_breakdown | json}}\n\nLEAD NAME: {{nodes.normalize.output.lead_name}}\nROLE: {{nodes.normalize.output.role}}\nCOMPANY: {{nodes.normalize.output.company}}\nMESSAGE: {{nodes.normalize.output.message}}\n\nReturn a light nurture tag from: 'nurture:needs-timeline', 'nurture:mid-funnel', 'nurture:champion-not-decision-maker', or null if no tag is warranted. Add a one-line follow-up angle for the reviewer.",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "tag": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "nurture:needs-timeline",
+                      "nurture:mid-funnel",
+                      "nurture:champion-not-decision-maker",
+                      null
+                    ]
+                  },
+                  "follow_up_angle": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "tag",
+                  "follow_up_angle"
+                ]
+              },
+              "model": "fast",
+              "temperature": 0
+            }
+          },
+          {
+            "id": "assemble",
+            "type": "transform",
+            "name": "Assemble lead record",
+            "description": "Join branches and build the final scored, routed lead record.",
+            "config": {
+              "value": {
+                "lead_score": "{{nodes.compute_score.output.lead_score}}",
+                "score_breakdown": "{{nodes.compute_score.output.score_breakdown}}",
+                "company_size_estimate": {
+                  "band": "{{nodes.assess.output.size_band}}",
+                  "evidence": "{{nodes.assess.output.size_evidence}}"
+                },
+                "fit_assessment": "{{nodes.assess.output.fit_assessment}}",
+                "route": "{{nodes.route_lead.output.matched | first}}",
+                "reply_draft": "{{nodes.draft_reply.output.text ?? null}}",
+                "nurture_tag": "{{nodes.nurture_tag.output.tag ?? nodes.warm_note.output.tag ?? null}}"
+              }
+            }
+          },
+          {
+            "id": "output",
+            "type": "output",
+            "name": "Output",
+            "description": "Final lead record.",
+            "config": {
+              "value": {
+                "lead_score": "{{nodes.assemble.output.lead_score}}",
+                "score_breakdown": "{{nodes.assemble.output.score_breakdown}}",
+                "company_size_estimate": "{{nodes.assemble.output.company_size_estimate}}",
+                "fit_assessment": "{{nodes.assemble.output.fit_assessment}}",
+                "route": "{{nodes.assemble.output.route}}",
+                "reply_draft": "{{nodes.assemble.output.reply_draft}}",
+                "nurture_tag": "{{nodes.assemble.output.nurture_tag}}"
+              }
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "input",
+            "to": "normalize"
+          },
+          {
+            "from": "normalize",
+            "to": "assess"
+          },
+          {
+            "from": "assess",
+            "to": "compute_score"
+          },
+          {
+            "from": "compute_score",
+            "to": "route_lead"
+          },
+          {
+            "from": "route_lead",
+            "to": "draft_reply",
+            "port": "hot"
+          },
+          {
+            "from": "route_lead",
+            "to": "warm_note",
+            "port": "warm"
+          },
+          {
+            "from": "route_lead",
+            "to": "nurture_tag",
+            "port": "cold"
+          },
+          {
+            "from": "draft_reply",
+            "to": "assemble"
+          },
+          {
+            "from": "warm_note",
+            "to": "assemble"
+          },
+          {
+            "from": "nurture_tag",
+            "to": "assemble"
+          },
+          {
+            "from": "assemble",
+            "to": "output"
+          }
+        ],
+        "policy": {
+          "maxCostUsd": 0.5,
+          "maxNodeExecutions": 500,
+          "timeoutMs": 600000,
+          "requireApprovalForSideEffects": false
+        },
+        "tests": [
+          {
+            "id": "t1",
+            "name": "typical_hot_lead",
+            "input": {
+              "lead_name": "Priya Raman",
+              "company": "Northwind Analytics",
+              "role": "VP Engineering",
+              "message": "We're evaluating CI tooling for a team of ~40 devs, hoping to roll out next quarter."
+            },
+            "criteria": [
+              "lead_score is an integer 0-100 equal to the weighted sum in score_breakdown",
+              "score_breakdown lists all four components with weights and raw scores",
+              "route is hot since score >=70, and reply_draft mentions 'Priya' and a message detail like CI tooling or team size",
+              "company_size_estimate includes a size band and quotes evidence from the message"
+            ],
+            "checks": [
+              {
+                "path": "lead_score",
+                "op": "type",
+                "value": "integer"
+              },
+              {
+                "path": "score_breakdown",
+                "op": "exists"
+              },
+              {
+                "path": "route",
+                "op": "equals",
+                "value": "hot"
+              },
+              {
+                "path": "reply_draft",
+                "op": "contains",
+                "value": "Priya"
+              }
+            ]
+          },
+          {
+            "id": "t2",
+            "name": "edge_case_cold_newsletter",
+            "input": {
+              "lead_name": "Sam Ortiz",
+              "company": "Ortiz Consulting",
+              "role": "",
+              "message": "Please add me to your newsletter."
+            },
+            "criteria": [
+              "lead_score is an integer 0-100 equal to the weighted sum in score_breakdown",
+              "route is cold since score <40 and a nurture_tag is present",
+              "no reply_draft is produced for a cold lead",
+              "company_size_estimate quotes input evidence rather than asserting unverifiable company facts"
+            ],
+            "checks": [
+              {
+                "path": "route",
+                "op": "equals",
+                "value": "cold"
+              },
+              {
+                "path": "nurture_tag",
+                "op": "exists"
+              },
+              {
+                "path": "lead_score",
+                "op": "matches",
+                "value": "^(100|[0-9]{1,2})$"
+              }
+            ]
+          },
+          {
+            "id": "t3",
+            "name": "tricky_ambiguous_role_and_missing_info",
+            "input": {
+              "lead_name": "Jordan Lee",
+              "company": "Acme Corp",
+              "role": "I wear many hats — some tech, some not",
+              "message": "A colleague mentioned you. We might need something like this eventually, not sure yet. Can't share team size or budget details right now, but happy to chat."
+            },
+            "criteria": [
+              "lead_score is an integer 0-100 equal to the weighted sum in score_breakdown",
+              "company_size_estimate acknowledges missing size evidence and quotes what input evidence exists instead of asserting a band as fact",
+              "route matches the stated thresholds given the computed score (hot >=70, warm 40-69, cold <40)",
+              "fit_assessment does not state unverifiable facts about Acme Corp as fact"
+            ],
+            "checks": [
+              {
+                "path": "lead_score",
+                "op": "type",
+                "value": "integer"
+              },
+              {
+                "path": "score_breakdown",
+                "op": "exists"
+              },
+              {
+                "path": "company_size_estimate",
+                "op": "minLength",
+                "value": 1
+              }
+            ]
+          }
+        ],
+        "meta": {
+          "builtBy": "anvil-builder",
+          "request": "Score inbound B2B leads from a contact-form submission (name, company, role, message): estimate company size and fit for a developer-tools product, compute a 0-100 lead score with explicit weights, route hot leads to a personalized reply draft and cold leads to a nurture tag.",
+          "taskSpec": {
+            "name": "Lead Scorer & Router",
+            "agentId": "lead-scorer-router",
+            "summary": "Scores inbound B2B contact-form leads 0-100 with transparent weights, estimates company size and developer-tools fit, and routes hot leads to a personalized reply draft or cold leads to a nurture tag.",
+            "goal": "Given a contact-form submission, produce a scored, routed lead record with an explicit score breakdown and an appropriate next action (personalized reply draft or nurture tag).",
+            "inputs": [
+              {
+                "name": "lead_name",
+                "type": "string",
+                "description": "Full name of the person who submitted the contact form.",
+                "required": true,
+                "example": "Priya Raman"
+              },
+              {
+                "name": "company",
+                "type": "string",
+                "description": "Company name as entered on the form.",
+                "required": true,
+                "example": "Northwind Analytics"
+              },
+              {
+                "name": "role",
+                "type": "string",
+                "description": "Job title or role as entered on the form; may be blank or free-text.",
+                "required": true,
+                "example": "VP Engineering"
+              },
+              {
+                "name": "message",
+                "type": "string",
+                "description": "Free-text message from the form describing their need or interest.",
+                "required": true,
+                "example": "We're evaluating CI tooling for a team of ~40 devs, hoping to roll out next quarter."
+              }
+            ],
+            "outputs": [
+              {
+                "name": "lead_score",
+                "type": "number",
+                "description": "Total score from 0-100, sum of weighted component scores."
+              },
+              {
+                "name": "score_breakdown",
+                "type": "object",
+                "description": "Component scores with explicit weights: role_seniority (30), company_size_fit (25), message_intent (25), use_case_fit (20); each component 0-100 scaled by its weight."
+              },
+              {
+                "name": "company_size_estimate",
+                "type": "object",
+                "description": "Estimated engineering team size band (e.g., 1-10, 11-50, 51-200, 200+) with the evidence from the message/role used to justify it."
+              },
+              {
+                "name": "fit_assessment",
+                "type": "string",
+                "description": "Short narrative on how well the lead fits a developer-tools ICP."
+              },
+              {
+                "name": "route",
+                "type": "string",
+                "description": "One of: 'hot' (score >= 70), 'warm' (40-69), 'cold' (< 40)."
+              },
+              {
+                "name": "reply_draft",
+                "type": "string",
+                "description": "Personalized reply email draft referencing the lead's name, company, role, and stated need. Present for hot leads; null otherwise."
+              },
+              {
+                "name": "nurture_tag",
+                "type": "string",
+                "description": "Nurture tag such as 'nurture:early-stage' or 'nurture:non-technical'. Present for cold leads; null otherwise."
+              }
+            ],
+            "steps": [
+              "Parse the submission and normalize fields (trim whitespace, infer missing role as 'unspecified').",
+              "Estimate engineering team size from explicit signals in the message (e.g., 'team of ~40 devs') and role seniority; assign a size band with cited evidence.",
+              "Score role_seniority (weight 30): 100 for VP/C-level/Head of, 70 for Director/Principal/Staff, 50 for Senior/Lead, 30 for IC engineer, 10 for student/non-technical/unspecified.",
+              "Score company_size_fit (weight 25): 100 for 51-200 engineers, 80 for 11-50, 60 for 200+, 30 for 1-10.",
+              "Score message_intent (weight 25): 100 for explicit evaluation/purchase timeline, 70 for active evaluation without timeline, 40 for general interest, 10 for vague or unrelated message.",
+              "Score use_case_fit (weight 20): 100 for use case directly matching the product's core capabilities, 50 for adjacent use case, 10 for no discernible fit.",
+              "Sum weighted components to produce lead_score (0-100); clamp and round to nearest integer.",
+              "Assign route: hot (>=70), warm (40-69), cold (<40).",
+              "For hot leads, write a personalized reply draft referencing name, company, role, and their stated need, with a concrete suggested next step (e.g., a call or trial).",
+              "For cold leads, assign a nurture tag reflecting the dominant reason for the low score (e.g., non-technical role, too small, no intent).",
+              "Return the full record: score, breakdown, size estimate, fit assessment, route, and the applicable action artifact."
+            ],
+            "constraints": [
+              "Score must be reproducible: every component score must be justified by cited evidence from the input fields.",
+              "Weights must sum to 100 (30/25/25/20) and be shown in the breakdown.",
+              "Never fabricate company facts (headcount, funding) not inferable from the inputs; label estimates as estimates.",
+              "Reply drafts must be under 150 words and reference at least two personalized details.",
+              "Exactly one action artifact per lead: reply_draft for hot, nurture_tag for cold, neither required for warm (may include a light nurture_tag).",
+              "Do not include the lead's email or any PII beyond what was submitted."
+            ],
+            "successCriteria": [
+              "lead_score is an integer between 0 and 100 and equals the weighted sum shown in score_breakdown.",
+              "score_breakdown lists all four components with their weights and raw component scores.",
+              "company_size_estimate includes a size band and quotes the input evidence supporting it.",
+              "route matches the stated thresholds (hot >=70, warm 40-69, cold <40).",
+              "Hot leads have a reply_draft that mentions the lead's name and at least one detail from their message; cold leads have a nurture_tag.",
+              "No output field asserts unverifiable company facts as fact."
+            ],
+            "assumptions": [
+              "ICP is a developer-tools product; best-fit buyers are engineering leaders at companies with 11-200 engineers.",
+              "Default weights: role_seniority 30, company_size_fit 25, message_intent 25, use_case_fit 20.",
+              "Routing thresholds: hot >=70, warm 40-69, cold <40.",
+              "No external enrichment (web lookup, CRM append) is performed; scoring relies solely on the four form fields.",
+              "Warm leads receive neither a full reply draft nor a mandatory nurture tag; a human reviews them.",
+              "Output is a single JSON record per submission, suitable for piping into a CRM or email system."
+            ],
+            "clarifyingQuestions": [
+              "Should warm leads (40-69) also receive a reply draft, or only hot leads?",
+              "Is there a CRM or routing system (e.g., HubSpot, Slack webhook) the route/action should be delivered to, or is JSON output sufficient?"
+            ],
+            "exampleInputs": [
+              {
+                "lead_name": "Priya Raman",
+                "company": "Northwind Analytics",
+                "role": "VP Engineering",
+                "message": "We're evaluating CI tooling for a team of ~40 devs, hoping to roll out next quarter."
+              },
+              {
+                "lead_name": "Tom Becker",
+                "company": "Becker Design Co",
+                "role": "Founder",
+                "message": "Saw your site, looks cool. What does it cost?"
+              },
+              {
+                "lead_name": "Aisha Diallo",
+                "company": "Fintech Systems Ltd",
+                "role": "Staff Platform Engineer",
+                "message": "Our platform team of 120 is standardizing on new build tooling this year; your docs look like a match for our monorepo setup."
+              },
+              {
+                "lead_name": "Sam Ortiz",
+                "company": "Ortiz Consulting",
+                "role": "",
+                "message": "Please add me to your newsletter."
+              }
+            ]
+          },
+          "plan": {
+            "pattern": "classify_route",
+            "rationale": "Each lead is scored deterministically from cited evidence, then routed by threshold into mutually exclusive branches (hot/warm/cold) with branch-specific artifacts. Scoring uses llm_structured for evidence-cited component scores, code for the exact weighted sum, and a router for threshold branching; the reply draft uses refine since it has an explicit quality bar (<150 words, ≥2 personalized details).",
+            "steps": [
+              {
+                "id": "normalize",
+                "type": "transform",
+                "purpose": "Normalize fields: trim whitespace on lead_name/company/role/message; infer empty role as 'unspecified'.",
+                "dependsOn": [
+                  "input"
+                ]
+              },
+              {
+                "id": "assess",
+                "type": "llm_structured",
+                "purpose": "From the normalized fields, estimate engineering team size band (1-10, 11-50, 51-200, 200+) with quoted evidence, produce fit_assessment narrative, and score the four components (role_seniority, company_size_fit, message_intent, use_case_fit) each 0-100 with cited evidence from the input. No fabricated company facts; estimates labeled as estimates.",
+                "dependsOn": [
+                  "normalize"
+                ],
+                "model": "balanced"
+              },
+              {
+                "id": "compute_score",
+                "type": "code",
+                "purpose": "Compute lead_score = round(role_seniority*0.30 + company_size_fit*0.25 + message_intent*0.25 + use_case_fit*0.20), clamp 0-100; build score_breakdown object with weights (30/25/25/20), raw component scores, and weighted contributions.",
+                "dependsOn": [
+                  "assess"
+                ]
+              },
+              {
+                "id": "route_lead",
+                "type": "router",
+                "purpose": "Deterministic threshold routing: hot if score >= 70, warm if 40-69, cold if < 40. Ports: hot, warm, cold.",
+                "dependsOn": [
+                  "compute_score"
+                ]
+              },
+              {
+                "id": "draft_reply",
+                "type": "refine",
+                "purpose": "For hot leads: draft a personalized reply email referencing lead name, company, role, and stated need, with a concrete next step. Criteria: under 150 words, references at least two personalized details, professional tone, no PII beyond submitted fields.",
+                "dependsOn": [
+                  "compute_score"
+                ],
+                "branch": {
+                  "from": "route_lead",
+                  "port": "hot"
+                },
+                "model": "fast"
+              },
+              {
+                "id": "nurture_tag",
+                "type": "llm_structured",
+                "purpose": "For cold leads: assign a nurture tag reflecting the dominant reason for the low score (e.g., 'nurture:non-technical', 'nurture:early-stage', 'nurture:no-intent') with a one-line justification.",
+                "dependsOn": [
+                  "compute_score"
+                ],
+                "branch": {
+                  "from": "route_lead",
+                  "port": "cold"
+                },
+                "model": "fast"
+              },
+              {
+                "id": "warm_note",
+                "type": "llm_structured",
+                "purpose": "For warm leads: optionally produce a light nurture tag (or null) summarizing the follow-up angle for human review; no reply draft.",
+                "dependsOn": [
+                  "compute_score"
+                ],
+                "branch": {
+                  "from": "route_lead",
+                  "port": "warm"
+                },
+                "model": "fast"
+              },
+              {
+                "id": "assemble",
+                "type": "transform",
+                "purpose": "Join branches and build the final record: lead_score, score_breakdown, company_size_estimate, fit_assessment, route, reply_draft (hot only, null otherwise), nurture_tag (cold always; warm optional; null for hot).",
+                "dependsOn": [
+                  "route_lead",
+                  "draft_reply",
+                  "nurture_tag",
+                  "warm_note"
+                ]
+              }
+            ],
+            "output": "lead_score (number, from compute_score), score_breakdown (object with four weighted components and evidence, from compute_score/assess), company_size_estimate (band + quoted evidence, from assess), fit_assessment (string, from assess), route ('hot'/'warm'/'cold', from route_lead), reply_draft (refined text from draft_reply for hot leads, null otherwise), nurture_tag (from nurture_tag for cold, warm_note optionally for warm, null for hot)."
+          },
+          "pattern": "classify_route",
+          "compile": [
+            {
+              "attempt": 0,
+              "strategy": "autofix",
+              "errors": 0,
+              "warnings": 0
+            }
+          ],
+          "evolution": [
+            {
+              "round": 0,
+              "score": 0.939,
+              "passRate": 1,
+              "accepted": true,
+              "change": "initial build"
+            }
+          ],
+          "taxonomy": {
+            "pattern": "classify_route",
+            "domain": "marketing_sales",
+            "sourceKind": "input_only",
+            "outputKind": "data"
+          }
+        }
+      },
+      "createdAt": 1790531923446,
+      "note": "built by Anvil",
+      "score": 0.938,
+      "evaluation": {
+        "version": 1,
+        "passRate": 1,
+        "score": 0.938,
+        "results": [
+          {
+            "testId": "t1",
+            "name": "typical_hot_lead",
+            "passed": true,
+            "score": 0.97,
+            "output": {
+              "lead_score": 95,
+              "score_breakdown": {
+                "role_seniority": {
+                  "weight": 30,
+                  "raw": 100,
+                  "weighted_contribution": 30,
+                  "evidence": "Role listed as \"VP Engineering\", a VP-level title."
+                },
+                "company_size_fit": {
+                  "weight": 25,
+                  "raw": 80,
+                  "weighted_contribution": 20,
+                  "evidence": "\"team of ~40 devs\" maps to the 11-50 band, which scores 80."
+                },
+                "message_intent": {
+                  "weight": 25,
+                  "raw": 100,
+                  "weighted_contribution": 25,
+                  "evidence": "\"We're evaluating CI tooling\" (explicit evaluation) with \"hoping to roll out next quarter\" (purchase timeline)."
+                },
+                "use_case_fit": {
+                  "weight": 20,
+                  "raw": 100,
+                  "weighted_contribution": 20,
+                  "evidence": "\"evaluating CI tooling\" directly matches core developer-tooling capabilities."
+                }
+              },
+              "company_size_estimate": {
+                "band": "11-50",
+                "evidence": "Explicit signal: \"team of ~40 devs\"."
+              },
+              "fit_assessment": "Priya is a VP Engineering at a company with an explicitly stated ~40-dev engineering team, squarely within the 11-200 engineer ICP. The message shows an active evaluation with a concrete rollout timeline, indicating strong purchase intent. Overall this is a high-fit lead, though company size sits at the lower end of the ICP band.",
+              "route": "hot",
+              "reply_draft": "Subject: Re: CI tooling evaluation for Northwind Analytics\n\nHi Priya,\n\nThanks for reaching out. Given your timeline — a rollout next quarter — and the scale of your ~40-dev team at Northwind Analytics, we can help you evaluate fit quickly.\n\nFor a team your size, the usual priorities are fast build times, easy onboarding, and clear per-team usage visibility. I'd suggest a short 20-minute call to walk through your current setup and map it against your Q-next rollout plan. If it looks like a fit, we can set up a trial so your engineers evaluate it hands-on before you commit.\n\nWould sometime this week or early next work for you?\n\nBest,\nThe team",
+              "nurture_tag": null
+            },
+            "criteria": [
+              {
+                "criterion": "lead_score is an integer 0-100 equal to the weighted sum in score_breakdown",
+                "probability": 0.82,
+                "passed": true
+              },
+              {
+                "criterion": "score_breakdown lists all four components with weights and raw scores",
+                "probability": 0.98,
+                "passed": true
+              },
+              {
+                "criterion": "route is hot since score >=70, and reply_draft mentions 'Priya' and a message detail like CI tooling or team size",
+                "probability": 0.98,
+                "passed": true
+              },
+              {
+                "criterion": "company_size_estimate includes a size band and quotes evidence from the message",
+                "probability": 0.98,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "lead_score",
+                  "op": "type",
+                  "value": "integer"
+                },
+                "passed": true,
+                "actual": 95
+              },
+              {
+                "check": {
+                  "path": "score_breakdown",
+                  "op": "exists"
+                },
+                "passed": true,
+                "actual": {
+                  "role_seniority": {
+                    "weight": 30,
+                    "raw": 100,
+                    "weighted_contribution": 30,
+                    "evidence": "Role listed as \"VP Engineering\", a VP-level title."
+                  },
+                  "company_size_fit": {
+                    "weight": 25,
+                    "raw": 80,
+                    "weighted_contribution": 20,
+                    "evidence": "\"team of ~40 devs\" maps to the 11-50 band, which scores 80."
+                  },
+                  "message_intent": {
+                    "weight": 25,
+                    "raw": 100,
+                    "weighted_contribution": 25,
+                    "evidence": "\"We're evaluating CI tooling\" (explicit evaluation) with \"hoping to roll out next quarter\" (purchase timeline)."
+                  },
+                  "use_case_fit": {
+                    "weight": 20,
+                    "raw": 100,
+                    "weighted_contribution": 20,
+                    "evidence": "\"evaluating CI tooling\" directly matches core developer-tooling capabilities."
+                  }
+                }
+              },
+              {
+                "check": {
+                  "path": "route",
+                  "op": "equals",
+                  "value": "hot"
+                },
+                "passed": true,
+                "actual": "hot"
+              },
+              {
+                "check": {
+                  "path": "reply_draft",
+                  "op": "contains",
+                  "value": "Priya"
+                },
+                "passed": true,
+                "actual": "Subject: Re: CI tooling evaluation for Northwind Analytics\n\nHi Priya,\n\nThanks for reaching out. Given your timeline — a rollout next quarter — and the scale of your ~40-dev team at Northwind Analytics, we can help you evaluate fit quickly.\n\nFor a team your size, the usual priorities are fast build t…"
+              }
+            ],
+            "runId": "run_4DQRmdh5d9OM",
+            "costUsd": 0.00035737599999999996,
+            "durationMs": 7028
+          },
+          {
+            "testId": "t2",
+            "name": "edge_case_cold_newsletter",
+            "passed": true,
+            "score": 0.929,
+            "output": {
+              "lead_score": 15,
+              "score_breakdown": {
+                "role_seniority": {
+                  "weight": 30,
+                  "raw": 10,
+                  "weighted_contribution": 3,
+                  "evidence": "ROLE field is empty and the message 'Please add me to your newsletter.' provides no seniority signal; unspecified role scores 10."
+                },
+                "company_size_fit": {
+                  "weight": 25,
+                  "raw": 30,
+                  "weighted_contribution": 7.5,
+                  "evidence": "No size signal given; 'Ortiz Consulting' implies a very small firm, mapping to the 1-10 band which scores 30."
+                },
+                "message_intent": {
+                  "weight": 25,
+                  "raw": 10,
+                  "weighted_contribution": 2.5,
+                  "evidence": "The message 'Please add me to your newsletter.' is a vague/unrelated request with no evaluation or purchase intent."
+                },
+                "use_case_fit": {
+                  "weight": 20,
+                  "raw": 10,
+                  "weighted_contribution": 2,
+                  "evidence": "No use case is discernible from the message 'Please add me to your newsletter.'; no developer-tooling need is stated."
+                }
+              },
+              "company_size_estimate": {
+                "band": "1-10",
+                "evidence": "estimate based on: no explicit team-size signal in inputs; company name 'Ortiz Consulting' suggests a solo or very small consultancy, and the message 'Please add me to your newsletter.' gives no headcount information."
+              },
+              "fit_assessment": "This lead appears to fall well outside the ICP: the company name suggests a small consultancy rather than an 11-200 engineer organization, and the message is a newsletter request with no evaluation intent. The role field is empty, so seniority cannot be assessed. This is likely a low-priority nurture contact at best.",
+              "route": "cold",
+              "reply_draft": null,
+              "nurture_tag": "nurture:no-intent"
+            },
+            "criteria": [
+              {
+                "criterion": "lead_score is an integer 0-100 equal to the weighted sum in score_breakdown",
+                "probability": 0.78,
+                "passed": true
+              },
+              {
+                "criterion": "route is cold since score <40 and a nurture_tag is present",
+                "probability": 0.98,
+                "passed": true
+              },
+              {
+                "criterion": "no reply_draft is produced for a cold lead",
+                "probability": 0.98,
+                "passed": true
+              },
+              {
+                "criterion": "company_size_estimate quotes input evidence rather than asserting unverifiable company facts",
+                "probability": 0.76,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "route",
+                  "op": "equals",
+                  "value": "cold"
+                },
+                "passed": true,
+                "actual": "cold"
+              },
+              {
+                "check": {
+                  "path": "nurture_tag",
+                  "op": "exists"
+                },
+                "passed": true,
+                "actual": "nurture:no-intent"
+              },
+              {
+                "check": {
+                  "path": "lead_score",
+                  "op": "matches",
+                  "value": "^(100|[0-9]{1,2})$"
+                },
+                "passed": true,
+                "actual": 15
+              }
+            ],
+            "runId": "run_CTKpgKNZz2-f",
+            "costUsd": 0.0006403,
+            "durationMs": 7402
+          },
+          {
+            "testId": "t3",
+            "name": "tricky_ambiguous_role_and_missing_info",
+            "passed": true,
+            "score": 0.916,
+            "output": {
+              "lead_score": 15,
+              "score_breakdown": {
+                "role_seniority": {
+                  "weight": 30,
+                  "raw": 10,
+                  "weighted_contribution": 3,
+                  "evidence": "'I wear many hats — some tech, some not' — non-technical/unspecified role, no engineering leadership title."
+                },
+                "company_size_fit": {
+                  "weight": 25,
+                  "raw": 30,
+                  "weighted_contribution": 7.5,
+                  "evidence": "No size signal given ('Can't share team size or budget details right now'); estimated band 1-10 maps to 30."
+                },
+                "message_intent": {
+                  "weight": 25,
+                  "raw": 10,
+                  "weighted_contribution": 2.5,
+                  "evidence": "'We might need something like this eventually, not sure yet' — vague, speculative interest with no evaluation or timeline."
+                },
+                "use_case_fit": {
+                  "weight": 20,
+                  "raw": 10,
+                  "weighted_contribution": 2,
+                  "evidence": "'We might need something like this eventually, not sure yet' — no discernible use case stated."
+                }
+              },
+              "company_size_estimate": {
+                "band": "1-10",
+                "evidence": "estimate based on: 'I wear many hats — some tech, some not' and 'Can't share team size or budget details right now' — no explicit team-size signal; the generalist, non-technical framing suggests a very small organization."
+              },
+              "fit_assessment": "This lead is a weak fit for the developer-tools ICP. The contact describes themselves as a generalist ('some tech, some not') rather than an engineering leader, and the message expresses only vague, speculative interest with no timeline or budget. While a conversation is possible, there is no evidence of an engineering organization in the 11-200 range or a concrete use case.",
+              "route": "cold",
+              "reply_draft": null,
+              "nurture_tag": "nurture:no-intent"
+            },
+            "criteria": [
+              {
+                "criterion": "lead_score is an integer 0-100 equal to the weighted sum in score_breakdown",
+                "probability": 0.8,
+                "passed": true
+              },
+              {
+                "criterion": "company_size_estimate acknowledges missing size evidence and quotes what input evidence exists instead of asserting a band as fact",
+                "probability": 0.77,
+                "passed": true
+              },
+              {
+                "criterion": "route matches the stated thresholds given the computed score (hot >=70, warm 40-69, cold <40)",
+                "probability": 0.98,
+                "passed": true
+              },
+              {
+                "criterion": "fit_assessment does not state unverifiable facts about Acme Corp as fact",
+                "probability": 0.86,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "lead_score",
+                  "op": "type",
+                  "value": "integer"
+                },
+                "passed": true,
+                "actual": 15
+              },
+              {
+                "check": {
+                  "path": "score_breakdown",
+                  "op": "exists"
+                },
+                "passed": true,
+                "actual": {
+                  "role_seniority": {
+                    "weight": 30,
+                    "raw": 10,
+                    "weighted_contribution": 3,
+                    "evidence": "'I wear many hats — some tech, some not' — non-technical/unspecified role, no engineering leadership title."
+                  },
+                  "company_size_fit": {
+                    "weight": 25,
+                    "raw": 30,
+                    "weighted_contribution": 7.5,
+                    "evidence": "No size signal given ('Can't share team size or budget details right now'); estimated band 1-10 maps to 30."
+                  },
+                  "message_intent": {
+                    "weight": 25,
+                    "raw": 10,
+                    "weighted_contribution": 2.5,
+                    "evidence": "'We might need something like this eventually, not sure yet' — vague, speculative interest with no evaluation or timeline."
+                  },
+                  "use_case_fit": {
+                    "weight": 20,
+                    "raw": 10,
+                    "weighted_contribution": 2,
+                    "evidence": "'We might need something like this eventually, not sure yet' — no discernible use case stated."
+                  }
+                }
+              },
+              {
+                "check": {
+                  "path": "company_size_estimate",
+                  "op": "minLength",
+                  "value": 1
+                },
+                "passed": true,
+                "actual": {
+                  "band": "1-10",
+                  "evidence": "estimate based on: 'I wear many hats — some tech, some not' and 'Can't share team size or budget details right now' — no explicit team-size signal; the generalist, non-technical framing suggests a very small organization."
+                }
+              }
+            ],
+            "runId": "run_liSOz4607Asd",
+            "costUsd": 0.00036565,
+            "durationMs": 4543
+          }
+        ],
+        "costUsd": 0.0013633259999999998,
+        "at": 1790532283045
+      },
+      "buildRunId": "run_TablcN9mu9u6"
+    }
+  ]
+}

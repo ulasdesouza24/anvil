@@ -1,0 +1,36 @@
+{
+  "tools": [
+    {
+      "name": "get_reservation",
+      "description": "Gives a reservation: id, passenger, flight, origin, destination, date, cabin (basic_economy, economy, business), price_usd, status (active, cancelled), booked_hours_ago.",
+      "parameters": { "type": "object", "properties": { "reservation_id": { "type": "string" } }, "required": ["reservation_id"] },
+      "sideEffects": false,
+      "adapter": "mock",
+      "mock": "const db = state.res || (state.res = { 'R1001': { id: 'R1001', passenger: 'Mia Chen', flight: 'AN100', origin: 'SFO', destination: 'JFK', date: '2026-11-03', cabin: 'economy', price_usd: 320, status: 'active', booked_hours_ago: 72 }, 'R1002': { id: 'R1002', passenger: 'Omar Haddad', flight: 'AN220', origin: 'BOS', destination: 'ORD', date: '2026-11-10', cabin: 'basic_economy', price_usd: 140, status: 'active', booked_hours_ago: 200 }, 'R1003': { id: 'R1003', passenger: 'Lena Novak', flight: 'AN310', origin: 'SEA', destination: 'LAX', date: '2026-11-15', cabin: 'business', price_usd: 610, status: 'active', booked_hours_ago: 10 } }); return db[args.reservation_id] || { error: 'no reservation with this id' };"
+    },
+    {
+      "name": "search_flights",
+      "description": "Gives the flights between two airports on a date: flight, origin, destination, date, departure, seats_left, price_usd.",
+      "parameters": { "type": "object", "properties": { "origin": { "type": "string" }, "destination": { "type": "string" }, "date": { "type": "string", "description": "YYYY-MM-DD" } }, "required": ["origin", "destination", "date"] },
+      "sideEffects": false,
+      "adapter": "mock",
+      "mock": "const all = [ ['AN100','SFO','JFK','08:00'], ['AN102','SFO','JFK','14:30'], ['AN104','SFO','JFK','21:15'], ['AN220','BOS','ORD','07:10'], ['AN224','BOS','ORD','18:40'], ['AN310','SEA','LAX','09:00'], ['AN312','SEA','LAX','16:20'] ]; return all.filter(f => f[1] === String(args.origin).toUpperCase() && f[2] === String(args.destination).toUpperCase()).map((f, i) => ({ flight: f[0], origin: f[1], destination: f[2], date: args.date, departure: f[3], seats_left: f[0] === 'AN104' ? 0 : 5 + i, price_usd: 300 + i * 25 }));"
+    },
+    {
+      "name": "change_flight",
+      "description": "Moves a reservation to another flight on the same route. Gives ok and the new flight, or an error.",
+      "parameters": { "type": "object", "properties": { "reservation_id": { "type": "string" }, "new_flight": { "type": "string" }, "new_date": { "type": "string", "description": "YYYY-MM-DD" } }, "required": ["reservation_id", "new_flight", "new_date"] },
+      "sideEffects": true,
+      "adapter": "mock",
+      "mock": "const r = (state.res || {})[args.reservation_id]; if (!r) return { error: 'no reservation with this id (get it first)' }; if (r.status !== 'active') return { error: 'the reservation is cancelled' }; if (args.new_flight === 'AN104') return { error: 'no seats left' }; r.flight = args.new_flight; r.date = args.new_date; state.changes = (state.changes || 0) + 1; return { ok: true, reservation_id: r.id, flight: r.flight, date: r.date };"
+    },
+    {
+      "name": "cancel_reservation",
+      "description": "Cancels a reservation. refund_usd is the amount to refund (0 for no refund). Gives ok, or an error.",
+      "parameters": { "type": "object", "properties": { "reservation_id": { "type": "string" }, "refund_usd": { "type": "number" } }, "required": ["reservation_id", "refund_usd"] },
+      "sideEffects": true,
+      "adapter": "mock",
+      "mock": "const r = (state.res || {})[args.reservation_id]; if (!r) return { error: 'no reservation with this id (get it first)' }; if (r.status === 'cancelled') return { error: 'already cancelled' }; r.status = 'cancelled'; return { ok: true, reservation_id: r.id, refund_usd: args.refund_usd };"
+    }
+  ]
+}

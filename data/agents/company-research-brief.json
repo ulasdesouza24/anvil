@@ -1,0 +1,997 @@
+{
+  "id": "company-research-brief",
+  "name": "Company Research Brief",
+  "description": "Researches a named company on the web and produces a one-page, source-backed sales brief with company facts, recent news, and tailored discovery questions.",
+  "createdAt": 1790531188897,
+  "updatedAt": 1790531188897,
+  "currentVersion": 1,
+  "versions": [
+    {
+      "version": 1,
+      "spec": {
+        "specVersion": "anvil/v1",
+        "id": "company-research-brief",
+        "name": "Company Research Brief",
+        "description": "Researches a named company on the web and produces a one-page, source-backed sales brief with company facts, recent news, and tailored discovery questions.",
+        "version": 1,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "company_name": {
+              "type": "string",
+              "description": "Name of the company to research, optionally with a location or industry hint to disambiguate"
+            },
+            "our_product_context": {
+              "type": "string",
+              "description": "Optional one-line description of what the sales rep is selling, used to tailor the discovery questions"
+            }
+          },
+          "required": [
+            "company_name"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "brief": {
+              "type": "string",
+              "description": "One-page markdown sales brief"
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "accessed_date": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "url",
+                  "title",
+                  "accessed_date"
+                ]
+              }
+            },
+            "confidence_notes": {
+              "type": "string",
+              "description": "Notes on data gaps, ambiguity, or unverified facts"
+            }
+          },
+          "required": [
+            "brief",
+            "sources",
+            "confidence_notes"
+          ]
+        },
+        "nodes": [
+          {
+            "id": "input",
+            "type": "input",
+            "name": "Input",
+            "description": "Company name and optional sales context",
+            "config": {}
+          },
+          {
+            "id": "research",
+            "type": "agent",
+            "name": "Web research",
+            "description": "Disambiguate the company, gather facts, profiles, and recent news with sources",
+            "config": {
+              "system": "You are a meticulous B2B research analyst. Never fabricate facts. If a fact (e.g. founding year, HQ) cannot be verified from a source you actually visited, record it as 'unverified'. If multiple companies match the name, pick the most prominent one and note the alternatives. Prefer primary sources: the company's official site, Wikipedia, Crunchbase, LinkedIn, and reputable press. Record the exact source URL and publication date for every news item.",
+              "task": "Research the company: {{input.company_name}}\n\n1. Disambiguate the identity using any location/industry hint in the name; if several plausible matches exist, choose the most prominent and note the alternatives.\n2. Find the official website and profiles (Wikipedia, Crunchbase, LinkedIn).\n3. Determine: what the company does, founding year, headquarters location, and 3-5 key products or services.\n4. Find at least 3 news items from the last 12 months (funding, leadership changes, product launches, partnerships, layoffs, earnings). Each item must have a title, publication date, and working source URL. Use current_time to know today's date.\n5. Note any data gaps, ambiguity, or unverifiable facts.\n\nReturn a structured answer with: overview, founded, headquarters, key_products, news (title/date/url each), sources (url/title/accessed_date each), confidence_notes.",
+              "tools": [
+                "web_search",
+                "fetch_url",
+                "current_time"
+              ],
+              "maxSteps": 15,
+              "model": "balanced",
+              "outputSchema": {
+                "type": "object",
+                "properties": {
+                  "overview": {
+                    "type": "string"
+                  },
+                  "founded": {
+                    "type": "string"
+                  },
+                  "headquarters": {
+                    "type": "string"
+                  },
+                  "key_products": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "news": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string"
+                        },
+                        "date": {
+                          "type": "string"
+                        },
+                        "url": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "date",
+                        "url"
+                      ]
+                    }
+                  },
+                  "sources": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "url": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "accessed_date": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "url",
+                        "title",
+                        "accessed_date"
+                      ]
+                    }
+                  },
+                  "confidence_notes": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "overview",
+                  "founded",
+                  "headquarters",
+                  "key_products",
+                  "news",
+                  "sources",
+                  "confidence_notes"
+                ]
+              }
+            }
+          },
+          {
+            "id": "extract_facts",
+            "type": "llm_structured",
+            "name": "Normalize facts",
+            "description": "Turn the research into clean typed fields, marking anything unverifiable",
+            "config": {
+              "system": "You normalize research notes into structured data. Do not invent or embellish any fact; if a field is missing or unverifiable, use the literal string 'unverified'. Keep source URLs exactly as given.",
+              "prompt": "Normalize this research into structured fields.\n\nRESEARCH:\n{{nodes.research.output.answer | json}}\n\nRules:\n- overview: 1-2 neutral sentences on what the company does.\n- founded: year or 'unverified'.\n- headquarters: location or 'unverified'.\n- key_products: 3-5 items.\n- news: keep only items from the last 12 months, each with title, date, url; minimum 3 if available.\n- sources: every URL cited, with title and accessed_date.\n- confidence_notes: ambiguity in company identity, data gaps, unverifiable facts.",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "overview": {
+                    "type": "string"
+                  },
+                  "founded": {
+                    "type": "string"
+                  },
+                  "headquarters": {
+                    "type": "string"
+                  },
+                  "key_products": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "news": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string"
+                        },
+                        "date": {
+                          "type": "string"
+                        },
+                        "url": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "date",
+                        "url"
+                      ]
+                    }
+                  },
+                  "sources": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "url": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "accessed_date": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "url",
+                        "title",
+                        "accessed_date"
+                      ]
+                    }
+                  },
+                  "confidence_notes": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "overview",
+                  "founded",
+                  "headquarters",
+                  "key_products",
+                  "news",
+                  "sources",
+                  "confidence_notes"
+                ]
+              },
+              "model": "fast"
+            }
+          },
+          {
+            "id": "draft_questions",
+            "type": "llm",
+            "name": "Draft discovery questions",
+            "description": "Write three open-ended, company-specific discovery questions",
+            "config": {
+              "system": "You write sharp, specific B2B discovery questions. Each question must reference something concrete about the company (a product, a recent event, or its market) and must not be reusable verbatim for a different company. Open-ended, no marketing language.",
+              "prompt": "Company facts and recent news:\n{{nodes.extract_facts.output | json}}\n\nSales context (may be empty): {{input.our_product_context ?? \"none provided — tailor only to the company's situation\"}}\n\nWrite exactly three open-ended discovery questions, one per line, numbered 1-3. Each must tie to a specific product, news item, or market dynamic of this company, and where relevant connect naturally to the sales context.",
+              "model": "fast"
+            }
+          },
+          {
+            "id": "write_brief",
+            "type": "refine",
+            "name": "Write the brief",
+            "description": "Assemble the one-page markdown brief and enforce the quality bar",
+            "config": {
+              "system": "You write concise, neutral, factual sales briefs in markdown. Use only the provided information — never invent facts. Mark anything unverifiable as 'unverified'. No marketing language.",
+              "task": "Write a one-page markdown sales brief for the company using ONLY the data below.\n\nCOMPANY DATA:\n{{nodes.extract_facts.output | json}}\n\nDISCOVERY QUESTIONS:\n{{nodes.draft_questions.output.text}}\n\nRequired sections in this order: ## Company Overview, ## Founded, ## Headquarters, ## Key Products/Services, ## Recent News (last 12 months), ## Three Smart Questions.\n- Recent News: list each item as '- <title> (<date>) — <url>'.\n- Keep the whole brief under 500 words excluding the sources.\n- Neutral, factual tone; no marketing language.\n- Use 'unverified' for any fact without a source.",
+              "criteria": [
+                "The brief contains all six sections: Company Overview, Founded, Headquarters, Key Products/Services, Recent News, Three Smart Questions",
+                "The brief body is under 500 words",
+                "Every recent-news item includes a publication date and a source URL",
+                "No claim is presented as verified without a source or an 'unverified' caveat",
+                "Each of the three questions references something specific to this company and is open-ended",
+                "The tone is neutral and factual with no marketing language"
+              ],
+              "maxIterations": 3,
+              "model": "balanced"
+            }
+          },
+          {
+            "id": "assemble",
+            "type": "transform",
+            "name": "Assemble output",
+            "description": "Combine brief, sources, and confidence notes into the final result",
+            "config": {
+              "value": {
+                "brief": "{{nodes.write_brief.output.text}}",
+                "sources": "{{nodes.extract_facts.output.sources}}",
+                "confidence_notes": "{{nodes.extract_facts.output.confidence_notes}}"
+              }
+            }
+          },
+          {
+            "id": "output",
+            "type": "output",
+            "name": "Output",
+            "description": "Final brief, sources, and confidence notes",
+            "config": {
+              "value": {
+                "brief": "{{nodes.assemble.output.brief}}",
+                "sources": "{{nodes.assemble.output.sources}}",
+                "confidence_notes": "{{nodes.assemble.output.confidence_notes}}"
+              }
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "input",
+            "to": "research"
+          },
+          {
+            "from": "research",
+            "to": "extract_facts"
+          },
+          {
+            "from": "extract_facts",
+            "to": "draft_questions"
+          },
+          {
+            "from": "extract_facts",
+            "to": "write_brief"
+          },
+          {
+            "from": "draft_questions",
+            "to": "write_brief"
+          },
+          {
+            "from": "write_brief",
+            "to": "assemble"
+          },
+          {
+            "from": "assemble",
+            "to": "output"
+          }
+        ],
+        "policy": {
+          "maxCostUsd": 0.5,
+          "maxNodeExecutions": 500,
+          "timeoutMs": 600000,
+          "requireApprovalForSideEffects": false
+        },
+        "tests": [
+          {
+            "id": "t1",
+            "name": "Typical: well-known company (Stripe)",
+            "input": {
+              "company_name": "Stripe"
+            },
+            "criteria": [
+              "The brief contains all six required sections: Company Overview, Founded, Headquarters, Key Products, Recent News, Three Smart Questions",
+              "The Recent News section contains at least 3 items, each with a date within the last 12 months and a source URL",
+              "Every URL cited in the brief body appears in the sources list, and every URL in the sources list is cited somewhere in the brief",
+              "The total brief body is under ~500 words"
+            ],
+            "checks": [
+              {
+                "path": "brief",
+                "op": "contains",
+                "value": "Recent News"
+              },
+              {
+                "path": "brief",
+                "op": "contains",
+                "value": "Three Smart Questions"
+              },
+              {
+                "path": "sources",
+                "op": "type",
+                "value": "array"
+              },
+              {
+                "path": "confidence_notes",
+                "op": "exists"
+              }
+            ]
+          },
+          {
+            "id": "t2",
+            "name": "Harder: disambiguation hint plus product context (Acme Robotics, Boston)",
+            "input": {
+              "company_name": "Acme Robotics (Boston)",
+              "our_product_context": "We sell cloud cost optimization software to mid-market SaaS companies"
+            },
+            "criteria": [
+              "The brief identifies a specific Boston-area robotics company (or explicitly states it could not confidently disambiguate, with a caveat in confidence_notes) rather than silently picking a wrong company",
+              "Each of the three discovery questions references something specific to this company (its products, news, or market) and would not read verbatim as a generic question for any other company",
+              "At least one discovery question is tailored to the cloud cost optimization context for a robotics company",
+              "Any fact not backed by a source URL is flagged with an appropriate caveat in confidence_notes"
+            ],
+            "checks": [
+              {
+                "path": "brief",
+                "op": "contains",
+                "value": "Boston"
+              },
+              {
+                "path": "brief",
+                "op": "matches",
+                "value": "Three Smart Questions"
+              },
+              {
+                "path": "confidence_notes",
+                "op": "minLength",
+                "value": 20
+              }
+            ]
+          },
+          {
+            "id": "t3",
+            "name": "Tricky: obscure/ambiguous name with adversarial phrasing (Northwind Manufacturing, Germany)",
+            "input": {
+              "company_name": "Northwind Manufacturing, Germany",
+              "our_product_context": "We sell industrial IoT predictive maintenance sensors"
+            },
+            "criteria": [
+              "The agent does not fabricate facts: any company details it cannot verify are either omitted or explicitly marked as unverified in confidence_notes",
+              "If multiple German companies match the name, the brief either picks one with an explicit disambiguation caveat or asks/flags the ambiguity rather than blending facts from different companies",
+              "The Recent News section contains at least 3 items each with a source URL, or the brief explicitly states that insufficient recent news was found rather than inventing items",
+              "The brief does not present any fact as verified without a source URL or a confidence_notes caveat"
+            ],
+            "checks": [
+              {
+                "path": "brief",
+                "op": "contains",
+                "value": "Northwind"
+              },
+              {
+                "path": "confidence_notes",
+                "op": "minLength",
+                "value": 30
+              },
+              {
+                "path": "sources",
+                "op": "type",
+                "value": "array"
+              }
+            ]
+          }
+        ],
+        "meta": {
+          "builtBy": "anvil-builder",
+          "request": "Given a company name, research it on the web and produce a one-page brief: what they do, founding year, HQ, key products, recent news (last 12 months) with source URLs, and three smart questions a sales rep could ask them.",
+          "taskSpec": {
+            "name": "Company Research Brief",
+            "agentId": "company-research-brief",
+            "summary": "Researches a named company on the web and produces a one-page sales-oriented brief covering what they do, founding year, HQ, key products, recent news with sources, and three smart discovery questions.",
+            "goal": "Given a company name, produce a concise, source-backed one-page brief that equips a sales rep to open an informed conversation with that company.",
+            "inputs": [
+              {
+                "name": "company_name",
+                "type": "string",
+                "description": "Name of the company to research, optionally with a location or industry hint to disambiguate",
+                "required": true,
+                "example": "Acme Robotics (Boston)"
+              },
+              {
+                "name": "our_product_context",
+                "type": "string",
+                "description": "Optional one-line description of what the sales rep is selling, used to tailor the discovery questions",
+                "required": false,
+                "example": "We sell cloud cost optimization software to mid-market SaaS companies"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "brief",
+                "type": "string (markdown)",
+                "description": "One-page brief with sections: Company Overview, Founded, Headquarters, Key Products/Services, Recent News (last 12 months, each item with source URL), and Three Smart Questions"
+              },
+              {
+                "name": "sources",
+                "type": "array of objects",
+                "description": "List of all URLs cited, each with {url, title, accessed_date}"
+              },
+              {
+                "name": "confidence_notes",
+                "type": "string",
+                "description": "Short note on data gaps, ambiguity in company identity, or facts that could not be verified"
+              }
+            ],
+            "steps": [
+              "Disambiguate the company name using the optional location/industry hint; if multiple plausible matches exist, pick the most prominent and note alternatives in confidence_notes",
+              "Search the web for the company's official website, Wikipedia/Crunchbase/LinkedIn profiles, and recent press coverage",
+              "Extract: what the company does, founding year, headquarters location, and 3-5 key products or services",
+              "Search for news from the last 12 months (funding, leadership changes, product launches, partnerships, layoffs, earnings); collect at least 3 items, each with a source URL and date",
+              "Draft three smart discovery questions tailored to the company's situation and, if provided, our_product_context (e.g., referencing a recent event or pain point)",
+              "Assemble the one-page brief in markdown, compile the sources list, and write confidence_notes for any unverifiable or ambiguous facts"
+            ],
+            "constraints": [
+              "Brief must fit on one page (~500 words max, excluding sources list)",
+              "Every recent-news item must include a working source URL and publication date",
+              "Do not fabricate facts; if founding year or HQ cannot be verified, state 'unverified' rather than guessing",
+              "News items must be from the last 12 months relative to the current date",
+              "Questions must be open-ended and specific to the company, not generic sales questions",
+              "Use neutral, factual tone; no marketing language"
+            ],
+            "successCriteria": [
+              "Brief contains all six required sections: Company Overview, Founded, Headquarters, Key Products, Recent News, Three Smart Questions",
+              "Recent News section contains at least 3 items, each dated within the last 12 months and each with a source URL",
+              "The sources list includes every URL cited in the brief, with no uncited URLs and no cited URLs missing from the list",
+              "No fact is presented as verified without a source or a confidence_notes caveat",
+              "Each of the three questions references something specific about the company (its products, news, or market) and cannot be reused verbatim for a different company",
+              "Total brief body is under ~500 words"
+            ],
+            "assumptions": [
+              "The agent has live web search access",
+              "The requester is a B2B sales rep; the brief is optimized for pre-call preparation",
+              "If our_product_context is omitted, questions are tailored to the company's situation only",
+              "If the company is private and financials are unavailable, omit financial details rather than estimating",
+              "English-language output regardless of company geography"
+            ],
+            "clarifyingQuestions": [],
+            "exampleInputs": [
+              {
+                "company_name": "Stripe"
+              },
+              {
+                "company_name": "Acme Robotics (Boston)",
+                "our_product_context": "We sell cloud cost optimization software to mid-market SaaS companies"
+              },
+              {
+                "company_name": "Northwind Manufacturing, Germany",
+                "our_product_context": "We sell industrial IoT predictive maintenance sensors"
+              }
+            ]
+          },
+          "plan": {
+            "pattern": "research_agent",
+            "rationale": "Open-ended web research with unpredictable steps (disambiguation, site discovery, news gathering) fits an autonomous agent node; a structured extraction step captures typed company facts; a refine loop enforces the explicit quality bar (six sections, ≤500 words, sourced news, neutral tone).",
+            "steps": [
+              {
+                "id": "research",
+                "type": "agent",
+                "purpose": "Disambiguate the company (using the location/industry hint), find its official site and profiles (Wikipedia/Crunchbase/LinkedIn), gather what it does, founding year, HQ, 3-5 key products, and at least 3 news items from the last 12 months each with source URL and date. Note ambiguities and unverifiable facts instead of guessing. Uses web_search/fetch_url; outputSchema captures facts, news items, sources, and confidence notes.",
+                "dependsOn": [
+                  "input"
+                ],
+                "model": "balanced"
+              },
+              {
+                "id": "extract_facts",
+                "type": "llm_structured",
+                "purpose": "Normalize the research into typed fields: overview, founded (or 'unverified'), headquarters (or 'unverified'), key_products[], news[{title, date, url}], sources[{url,title}], confidence_notes.",
+                "dependsOn": [
+                  "research"
+                ],
+                "model": "fast"
+              },
+              {
+                "id": "draft_questions",
+                "type": "llm",
+                "purpose": "Draft three open-ended, company-specific discovery questions referencing its products/news/market, tailored to our_product_context if provided.",
+                "dependsOn": [
+                  "extract_facts",
+                  "input"
+                ],
+                "model": "fast"
+              },
+              {
+                "id": "write_brief",
+                "type": "refine",
+                "purpose": "Assemble the one-page markdown brief with all six required sections, ≤500 words, every news item dated with a working URL, neutral tone, 'unverified' where facts lack sources. Criteria: all sections present, word limit, every news item has date+URL, no unsourced claims, questions are company-specific.",
+                "dependsOn": [
+                  "extract_facts",
+                  "draft_questions"
+                ],
+                "model": "balanced"
+              },
+              {
+                "id": "assemble",
+                "type": "transform",
+                "purpose": "Combine brief text, sources list (with accessed_date), and confidence_notes into the final output object.",
+                "dependsOn": [
+                  "write_brief",
+                  "extract_facts"
+                ]
+              }
+            ],
+            "output": "brief: markdown text from write_brief (refined draft); sources: array of {url, title, accessed_date} from extract_facts.sources; confidence_notes: string from extract_facts.confidence_notes covering ambiguity and unverified facts."
+          },
+          "pattern": "research_agent",
+          "compile": [
+            {
+              "attempt": 0,
+              "strategy": "autofix",
+              "errors": 0,
+              "warnings": 0
+            }
+          ],
+          "evolution": [
+            {
+              "round": 0,
+              "score": 0.893,
+              "passRate": 0.667,
+              "accepted": true,
+              "change": "initial build"
+            },
+            {
+              "round": 1,
+              "score": 0.821,
+              "passRate": 0,
+              "accepted": false,
+              "change": "Add a '## Sources' section to the write_brief task that lists every entry from the sources data, and state explicitly that every URL in the brief must come from the sources list and every source URL must appear in the brief; Update the section-count criterion to include the Sources section and add a new criterion enforcing bidirectional URL coverage; Tighten the research agent's task so each news item must use the exact article-page URL, never an index/listing page"
+            },
+            {
+              "round": 2,
+              "score": 0.839,
+              "passRate": 0.333,
+              "accepted": false,
+              "change": "write_brief task: add required '## Sources' section listing every source from COMPANY DATA, with explicit rule that every URL in the brief appears in Sources and vice versa; clarify word count excludes the Sources section; write_brief criteria: update section criterion to seven sections, replace word-count criterion with body-only wording, and add a bidirectional URL-consistency criterion; extract_facts prompt: require the sources array to include every URL cited anywhere in the research, explicitly including every news item URL"
+            }
+          ],
+          "taxonomy": {
+            "pattern": "research_agent",
+            "domain": "marketing_sales",
+            "sourceKind": "web_page",
+            "outputKind": "report"
+          }
+        }
+      },
+      "createdAt": 1790531188897,
+      "note": "built by Anvil",
+      "score": 0.893,
+      "evaluation": {
+        "version": 1,
+        "passRate": 0.667,
+        "score": 0.893,
+        "results": [
+          {
+            "testId": "t1",
+            "name": "Typical: well-known company (Stripe)",
+            "passed": false,
+            "score": 0.869,
+            "output": {
+              "brief": "# Sales Brief: Stripe, Inc.\n\n## Company Overview\nStripe, Inc. is an Irish-American private financial services and SaaS company that builds payment processing and economic infrastructure for internet businesses. It offers APIs and tools for online and in-person payments, billing, fraud prevention, treasury, issuing, and AI-era products such as agent payments and token billing. Valuation, funding status, and recent revenue figures are unverified.\n\n## Founded\n2009\n\n## Headquarters\nDual headquarters: South San Francisco, California, U.S. and Dublin, Ireland\n\n## Key Products/Services\n- Payments (payment processing APIs, Checkout, Link)\n- Billing & invoicing (including usage-based/token billing)\n- Connect (marketplace/platform payments)\n- Radar (fraud prevention)\n- Treasury / Issuing / Terminal (banking-as-a-service, card issuing, in-person payments)\n\n## Recent News (last 12 months)\n- Stripe helps Muse, Meta's new personal AI agent, shop across the internet with Link (2026-09-08) — https://stripe.com/newsroom/news/stripe-helps-meta-muse-shop-with-link\n- Stripe celebrates 10 years in Singapore by expanding its infrastructure for global businesses (2026-08-25) — https://stripe.com/newsroom/news/stripe-celebrates-10-years-in-singapore-by-expanding-its-infrastructure-for-global-businesses\n- Stripe agrees to acquire OpenRouter to help businesses optimize token routing and usage (2026-08-19) — https://stripe.com/newsroom/news/stripe-agrees-to-acquire-openrouter\n- Stripe named a Leader by Gartner for its Billing product for third consecutive year (2026-08-18) — https://stripe.com/newsroom/news\n- Eileen O'Mara named vice chair of Stripe; Tyler Bryson appointed chief revenue officer (2026-06-22) — https://stripe.com/newsroom/news\n\nNote: the leadership-change item is verified only via the newsroom index listing, not the individual press-release page.\n\n## Three Smart Questions\n1. With the OpenRouter acquisition announced in August 2026, how are you thinking about integrating token routing and usage metering into Billing without disrupting the metered-billing workflows your Gartner-recognized Billing customers already rely on?\n2. Since the Muse launch showed agents transacting through Link at scale, what's your current framework for deciding which agent-commerce merchants get early access, and how do you evaluate fraud exposure in Radar when the buyer is an agent rather than a human?\n3. As you expand the Singapore infrastructure for businesses moving money across APAC corridors, where do you still see gaps in Treasury and Issuing coverage that force multi-processor setups for your global merchants?\n\n---\n\n**Sources:** Wikipedia (accessed 2026-09-27); stripe.com (accessed 2026-09-27); Stripe Newsroom (accessed 2026-09-27); OpenRouter acquisition press release (accessed 2026-09-27); Meta Muse/Link press release (accessed 2026-09-27).",
+              "sources": [
+                {
+                  "url": "https://en.wikipedia.org/wiki/Stripe,_Inc.",
+                  "title": "Stripe, Inc. - Wikipedia",
+                  "accessed_date": "2026-09-27"
+                },
+                {
+                  "url": "https://stripe.com",
+                  "title": "Stripe official website",
+                  "accessed_date": "2026-09-27"
+                },
+                {
+                  "url": "https://stripe.com/newsroom/news",
+                  "title": "Stripe Newsroom - Latest News & Announcements",
+                  "accessed_date": "2026-09-27"
+                },
+                {
+                  "url": "https://stripe.com/newsroom/news/stripe-agrees-to-acquire-openrouter",
+                  "title": "Stripe agrees to acquire OpenRouter (press release)",
+                  "accessed_date": "2026-09-27"
+                },
+                {
+                  "url": "https://stripe.com/newsroom/news/stripe-helps-meta-muse-shop-with-link",
+                  "title": "Stripe helps Meta's Muse shop with Link (press release)",
+                  "accessed_date": "2026-09-27"
+                }
+              ],
+              "confidence_notes": "High confidence: identity unambiguous (Stripe, Inc., payments company), founded 2009, dual HQ South San Francisco/Dublin per Wikipedia and company press releases. News items dated within the last 12 months (as of 2026-09-27) sourced from Stripe's own newsroom; titles/dates verified directly or via the newsroom index. Gaps: Crunchbase/LinkedIn profiles not directly fetched (access restrictions); valuation, current funding status, and 2025-2026 revenue figures unverified; the leadership-change item (O'Mara/Bryson) verified only via the newsroom index listing, not the individual press-release page. Alternative companies named 'Stripe' exist but are far less prominent."
+            },
+            "criteria": [
+              {
+                "criterion": "The brief contains all six required sections: Company Overview, Founded, Headquarters, Key Products, Recent News, Three Smart Questions",
+                "probability": 0.98,
+                "passed": true
+              },
+              {
+                "criterion": "The Recent News section contains at least 3 items, each with a date within the last 12 months and a source URL",
+                "probability": 0.96,
+                "passed": true
+              },
+              {
+                "criterion": "Every URL cited in the brief body appears in the sources list, and every URL in the sources list is cited somewhere in the brief",
+                "probability": 0.27,
+                "passed": false
+              },
+              {
+                "criterion": "The total brief body is under ~500 words",
+                "probability": 0.74,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "brief",
+                  "op": "contains",
+                  "value": "Recent News"
+                },
+                "passed": true,
+                "actual": "# Sales Brief: Stripe, Inc.\n\n## Company Overview\nStripe, Inc. is an Irish-American private financial services and SaaS company that builds payment processing and economic infrastructure for internet businesses. It offers APIs and tools for online and in-person payments, billing, fraud prevention, tr…"
+              },
+              {
+                "check": {
+                  "path": "brief",
+                  "op": "contains",
+                  "value": "Three Smart Questions"
+                },
+                "passed": true,
+                "actual": "# Sales Brief: Stripe, Inc.\n\n## Company Overview\nStripe, Inc. is an Irish-American private financial services and SaaS company that builds payment processing and economic infrastructure for internet businesses. It offers APIs and tools for online and in-person payments, billing, fraud prevention, tr…"
+              },
+              {
+                "check": {
+                  "path": "sources",
+                  "op": "type",
+                  "value": "array"
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "url": "https://en.wikipedia.org/wiki/Stripe,_Inc.",
+                    "title": "Stripe, Inc. - Wikipedia",
+                    "accessed_date": "2026-09-27"
+                  },
+                  {
+                    "url": "https://stripe.com",
+                    "title": "Stripe official website",
+                    "accessed_date": "2026-09-27"
+                  },
+                  {
+                    "url": "https://stripe.com/newsroom/news",
+                    "title": "Stripe Newsroom - Latest News & Announcements",
+                    "accessed_date": "2026-09-27"
+                  },
+                  {
+                    "url": "https://stripe.com/newsroom/news/stripe-agrees-to-acquire-openrouter",
+                    "title": "Stripe agrees to acquire OpenRouter (press release)",
+                    "accessed_date": "2026-09-27"
+                  },
+                  {
+                    "url": "https://stripe.com/newsroom/news/stripe-helps-meta-muse-shop-with-link",
+                    "title": "Stripe helps Meta's Muse shop with Link (press release)",
+                    "accessed_date": "2026-09-27"
+                  }
+                ]
+              },
+              {
+                "check": {
+                  "path": "confidence_notes",
+                  "op": "exists"
+                },
+                "passed": true,
+                "actual": "High confidence: identity unambiguous (Stripe, Inc., payments company), founded 2009, dual HQ South San Francisco/Dublin per Wikipedia and company press releases. News items dated within the last 12 months (as of 2026-09-27) sourced from Stripe's own newsroom; titles/dates verified directly or via t…"
+              }
+            ],
+            "runId": "run_Ri31Eu7hvUFZ",
+            "costUsd": 0.010330396000000002,
+            "durationMs": 21177
+          },
+          {
+            "testId": "t2",
+            "name": "Harder: disambiguation hint plus product context (Acme Robotics, Boston)",
+            "passed": true,
+            "score": 0.879,
+            "output": {
+              "brief": "## Company Overview\nNo prominent company named \"Acme Robotics\" with a Boston, MA headquarters could be verified. The name appears primarily as a fictional/placeholder example in marketing and business-plan content. The most concrete real candidate is an MIT SMART programme profile describing a Cambridge/UK warehouse AMR (autonomous mobile robot) spinout, though its website is an example.com placeholder. Other unrelated entities share the name: a FIRST FTC student team (Grass Valley, CA), a small California LLC, and UK firms. Confidence in any specific company match is very low; confirm the exact legal name or domain with the requester before further research.\n\n## Founded\nUnverified.\n\n## Headquarters\nUnverified. The queried Boston, MA location could not be confirmed. One real candidate (per MIT SMART profile) is associated with Cambridge/UK; a separate \"Acme Robotics, Inc.\" site lists Palo Alto, CA.\n\n## Key Products/Services\n- Unverified\n- Unverified\n- Unverified\n\nThe only product-specific signal found: the MIT SMART profile describes warehouse autonomous mobile robots (unverified against a live company site).\n\n## Recent News (last 12 months)\nNo verifiable news items could be attributed to any entity named \"Acme Robotics\" in the last 12 months.\n\n## Three Smart Questions\n1. Your MIT SMART profile describes warehouse autonomous mobile robots as your core product — as you scale deployments across UK and US customer sites, how does your cloud infrastructure spend (simulation, fleet telemetry, mapping workloads) behave as robot counts grow, and where does it hurt most?\n2. Robotics companies typically run bursty compute — large simulation and training jobs alongside always-on fleet monitoring — and the MIT SMART listing suggests you're still early-stage post-spinout; how are you currently deciding what runs on-prem versus cloud, and who owns that tradeoff on your team?\n3. Given that warehouse automation buyers are under margin pressure themselves and your spinout status means limited finance headcount, how do you currently get visibility into per-customer or per-robot cloud costs when pricing deployments or evaluating unit economics?\n\n## Sources\n- https://acmerobotics.work/ — Acme Robotics, Inc. official site (lists Palo Alto, CA; minimal content), accessed 2026-09-27\n- https://smart.mit.edu/companies/acme-robotics — MIT SMART programme profile (Cambridge/UK warehouse AMR spinout), accessed 2026-09-27\n- https://goacmerobotics.com/about-us/ — FIRST FTC Team #8367, Grass Valley, CA (student team), accessed 2026-09-27\n- https://www.bizprofile.net/ca/glendale/acme-robotics-l-l — Acme Robotics L.L.C., Glendale, CA (registered March 9, 2023), accessed 2026-09-27\n- https://find-and-update.company-information.service.gov.uk/company/15333505 — ACME ROBOTS LIMITED, UK Companies House (incorporated 7 Dec 2023), accessed 2026-09-27\n- https://prfect.co/blog/en/how-to-write-a-press-release-in-60-minutes-the-solo-founder-s-five-block-scaffol — fictional \"Acme Robotics, Boston-based\" example, accessed 2026-09-27\n- https://upmetrics.co/blog/executive-summary-business-plan — explicitly fictional example, accessed 2026-09-27\n- https://www.getwickedgrowth.com/use-cases/account-brief-from-url/ — illustrative example content, accessed 2026-09-27",
+              "sources": [
+                {
+                  "url": "https://acmerobotics.work/",
+                  "title": "Acme Robotics, Inc. official site (lists Palo Alto, CA; minimal content)",
+                  "accessed_date": "2026-09-27"
+                },
+                {
+                  "url": "https://smart.mit.edu/companies/acme-robotics",
+                  "title": "MIT SMART programme profile — Acme Robotics (Cambridge/UK warehouse AMR spinout; website is an example.com placeholder)",
+                  "accessed_date": "2026-09-27"
+                },
+                {
+                  "url": "https://goacmerobotics.com/about-us/",
+                  "title": "ACME Robotics — FIRST FTC Team #8367, Grass Valley, CA (student team, not a company)",
+                  "accessed_date": "2026-09-27"
+                },
+                {
+                  "url": "https://www.bizprofile.net/ca/glendale/acme-robotics-l-l",
+                  "title": "Acme Robotics L.L.C. — Glendale, CA business filing (registered March 9, 2023)",
+                  "accessed_date": "2026-09-27"
+                },
+                {
+                  "url": "https://find-and-update.company-information.service.gov.uk/company/15333505",
+                  "title": "ACME ROBOTS LIMITED — UK Companies House (Stockport, incorporated 7 Dec 2023)",
+                  "accessed_date": "2026-09-27"
+                },
+                {
+                  "url": "https://prfect.co/blog/en/how-to-write-a-press-release-in-60-minutes-the-solo-founder-s-five-block-scaffol",
+                  "title": "prfect.co blog — uses 'Acme Robotics, Boston-based' as a fictional press-release example",
+                  "accessed_date": "2026-09-27"
+                },
+                {
+                  "url": "https://upmetrics.co/blog/executive-summary-business-plan",
+                  "title": "upmetrics.co blog — explicitly states its 'Acme Robotics' example is fictional",
+                  "accessed_date": "2026-09-27"
+                },
+                {
+                  "url": "https://www.getwickedgrowth.com/use-cases/account-brief-from-url/",
+                  "title": "getwickedgrowth.com — 'Acme Robotics' used as illustrative example content",
+                  "accessed_date": "2026-09-27"
+                }
+              ],
+              "confidence_notes": "Very low confidence: the query 'Acme Robotics (Boston)' most likely refers to a fictional/placeholder company, as multiple sources explicitly use the name in example content and one even pairs it with 'Boston-based'. No Boston-headquartered company of this name was found on the official web, Crunchbase (blocked by Cloudflare), LinkedIn (company page 404), or Wikipedia. All candidate real entities are either student teams, small LLCs, UK firms, or possibly template entries. No verifiable news items from the last 12 months could be attributed. Recommend confirming the exact legal name, domain, or a news article with the requester before further research."
+            },
+            "criteria": [
+              {
+                "criterion": "The brief identifies a specific Boston-area robotics company (or explicitly states it could not confidently disambiguate, with a caveat in confidence_notes) rather than silently picking a wrong company",
+                "probability": 0.97,
+                "passed": true
+              },
+              {
+                "criterion": "Each of the three discovery questions references something specific to this company (its products, news, or market) and would not read verbatim as a generic question for any other company",
+                "probability": 0.55,
+                "passed": true
+              },
+              {
+                "criterion": "At least one discovery question is tailored to the cloud cost optimization context for a robotics company",
+                "probability": 0.97,
+                "passed": true
+              },
+              {
+                "criterion": "Any fact not backed by a source URL is flagged with an appropriate caveat in confidence_notes",
+                "probability": 0.66,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "brief",
+                  "op": "contains",
+                  "value": "Boston"
+                },
+                "passed": true,
+                "actual": "## Company Overview\nNo prominent company named \"Acme Robotics\" with a Boston, MA headquarters could be verified. The name appears primarily as a fictional/placeholder example in marketing and business-plan content. The most concrete real candidate is an MIT SMART programme profile describing a Cambr…"
+              },
+              {
+                "check": {
+                  "path": "brief",
+                  "op": "matches",
+                  "value": "Three Smart Questions"
+                },
+                "passed": true,
+                "actual": "## Company Overview\nNo prominent company named \"Acme Robotics\" with a Boston, MA headquarters could be verified. The name appears primarily as a fictional/placeholder example in marketing and business-plan content. The most concrete real candidate is an MIT SMART programme profile describing a Cambr…"
+              },
+              {
+                "check": {
+                  "path": "confidence_notes",
+                  "op": "minLength",
+                  "value": 20
+                },
+                "passed": true,
+                "actual": "Very low confidence: the query 'Acme Robotics (Boston)' most likely refers to a fictional/placeholder company, as multiple sources explicitly use the name in example content and one even pairs it with 'Boston-based'. No Boston-headquartered company of this name was found on the official web, Crunchb…"
+              }
+            ],
+            "runId": "run_LMh1RAIaOZuZ",
+            "costUsd": 0.108294094,
+            "durationMs": 76972
+          },
+          {
+            "testId": "t3",
+            "name": "Tricky: obscure/ambiguous name with adversarial phrasing (Northwind Manufacturing, Germany)",
+            "passed": true,
+            "score": 0.931,
+            "output": {
+              "brief": "# Sales Brief: Northwind Manufacturing\n\n> **Verification note:** No German company named \"Northwind Manufacturing\" could be verified as an actual operating business as of 2026-09-27. The closest real German entity is **Northwind GmbH (Cuxhaven)** — per commercial register entry (Northdata) and LinkedIn — a subsidiary of Jiangsu Zhenjiang New Energy Equipment Co. (JZNEE). This brief covers Northwind GmbH as the alternative; the requester should confirm which entity was intended.\n\n## Company Overview\nNorthwind GmbH, registered in Cuxhaven, Germany (Amtsgericht Tostedt, HRB 211546 — per Northdata commercial register entry), operates as a supply-chain and logistics hub for offshore wind components on behalf of its parent company JZNEE (per LinkedIn profile). Its commercial register purpose includes offshore wind power equipment sales and logistics, SCM warehousing and component supply for wind energy, metal structures manufacturing, and new energy technology R&D (per commercial register entry). It does not use the name \"Northwind Manufacturing.\" A fictional \"Northwind Manufacturing\" appears in a LibreTexts teaching case study, and Northwind Inc. (Arkansas, USA) is an unrelated namesake (per respective websites).\n\n## Founded\nunverified (LinkedIn lists 2025 — unverified)\n\n## Headquarters\nunverified; registered in Cuxhaven, Germany (commercial register: Amtsgericht Tostedt, HRB 211546 — per Northdata)\n\n## Key Products/Services\n- unverified — no confirmed products for a German \"Northwind Manufacturing\"\n- Alternative (Northwind GmbH, Cuxhaven): offshore wind power equipment sales/logistics (per commercial register purpose)\n- Alternative (Northwind GmbH, Cuxhaven): SCM warehousing and component supply for wind energy (per commercial register purpose)\n- Alternative (Northwind GmbH, Cuxhaven): metal structures manufacturing / new energy technology R&D (per commercial register purpose)\n\n## Recent News (last 12 months)\n- No news items could be verified for a German \"Northwind Manufacturing\" or for Northwind GmbH (Cuxhaven) in the last 12 months (searches as of 2026-09-27 — unverified); the list is therefore empty rather than fabricated. No publication dates or URLs exist to report.\n\n## Three Smart Questions\n1. Since Northwind GmbH serves as the European logistics and warehousing hub for JZNEE's offshore wind components out of Cuxhaven (per LinkedIn), how do you currently track the condition of stored and in-transit components like towers and monopiles while they sit in your warehouse or port facilities before installation?\n2. Your commercial register purpose lists both metal structures manufacturing and supply-chain services — where does the handoff happen between your own fabrication/R&D activity and the logistics operation, and are there gaps in condition monitoring at that transition point that cause disputes over component integrity?\n3. Offshore wind components are expensive to replace and delays at Cuxhaven ripple directly into installation vessel schedules — when a customer such as a turbine OEM or project developer claims a component arrived degraded, how do you currently prove storage and handling conditions, and what would automated environmental and vibration data change in those conversations?\n\n## Sources\n- Northdata – Northwind GmbH, Cuxhaven (commercial register entry) — https://www.northdata.de/Northwind%20GmbH,%20Cuxhaven/Amtsgericht%20Tostedt%20HRB%20211546 (accessed 2026-09-27)\n- LinkedIn – NORTHWIND GmbH (Cuxhaven, wind energy logistics subsidiary of JZNEE) — https://linkedin.com/company/northwind-gmbh (accessed 2026-09-27)\n- Firminform – Northwind GmbH, Cuxhaven company profile — https://www.firminform.de/unternehmen/Northwind-GmbH-Cuxhaven (accessed 2026-09-27)\n- LibreTexts case study featuring a fictional \"Northwind Manufacturing\" — https://eng.libretexts.org/Workbench/De_Anza_-_95E/03%3A_Stakeholder_Engagement_and_Communications/3.02%3A_Guide_to_Stakeholder_Management_and_Communications/3.2.02%3A_Case_Study-_The_Forgotten_Stakeholder (accessed 2026-09-27)\n- Northwind Inc. (Arkansas, USA) – unrelated namesake — https://www.northwindinc.com/ (accessed 2026-09-27)",
+              "sources": [
+                {
+                  "url": "https://www.northdata.de/Northwind%20GmbH,%20Cuxhaven/Amtsgericht%20Tostedt%20HRB%20211546",
+                  "title": "Northdata – Northwind GmbH, Cuxhaven (commercial register entry)",
+                  "accessed_date": "2026-09-27"
+                },
+                {
+                  "url": "https://linkedin.com/company/northwind-gmbh",
+                  "title": "LinkedIn – NORTHWIND GmbH (Cuxhaven, wind energy logistics subsidiary of JZNEE)",
+                  "accessed_date": "2026-09-27"
+                },
+                {
+                  "url": "https://www.firminform.de/unternehmen/Northwind-GmbH-Cuxhaven",
+                  "title": "Firminform – Northwind GmbH, Cuxhaven company profile",
+                  "accessed_date": "2026-09-27"
+                },
+                {
+                  "url": "https://eng.libretexts.org/Workbench/De_Anza_-_95E/03%3A_Stakeholder_Engagement_and_Communications/3.02%3A_Guide_to_Stakeholder_Management_and_Communications/3.2.02%3A_Case_Study-_The_Forgotten_Stakeholder",
+                  "title": "LibreTexts case study featuring a fictional 'Northwind Manufacturing' (evidence the name is used in teaching materials, not a real firm)",
+                  "accessed_date": "2026-09-27"
+                },
+                {
+                  "url": "https://www.northwindinc.com/",
+                  "title": "Northwind Inc. (Arkansas, USA) – unrelated namesake",
+                  "accessed_date": "2026-09-27"
+                }
+              ],
+              "confidence_notes": "High confidence that no prominent German company named 'Northwind Manufacturing' exists in public sources as of 2026-09-27: searches across web, LinkedIn, Crunchbase-style queries, and news returned only fictional case-study entities and unrelated US namesakes. No official website, Wikipedia page, Crunchbase profile, or news items from the last 12 months could be verified for such a company; the news list is therefore empty rather than fabricated. The closest real German entity is Northwind GmbH (Cuxhaven, wind-energy components logistics, subsidiary of China's JZNEE, registered HRB 211546 Tostedt, LinkedIn-listed founding 2025 — unverified) — noted as an alternative but it does not use the 'Manufacturing' name. Recommendation: confirm with the requester whether they meant Northwind GmbH (Cuxhaven), a US namesake, or a different spelling (e.g., 'Nordwind')."
+            },
+            "criteria": [
+              {
+                "criterion": "The agent does not fabricate facts: any company details it cannot verify are either omitted or explicitly marked as unverified in confidence_notes",
+                "probability": 0.86,
+                "passed": true
+              },
+              {
+                "criterion": "If multiple German companies match the name, the brief either picks one with an explicit disambiguation caveat or asks/flags the ambiguity rather than blending facts from different companies",
+                "probability": 0.89,
+                "passed": true
+              },
+              {
+                "criterion": "The Recent News section contains at least 3 items each with a source URL, or the brief explicitly states that insufficient recent news was found rather than inventing items",
+                "probability": 0.98,
+                "passed": true
+              },
+              {
+                "criterion": "The brief does not present any fact as verified without a source URL or a confidence_notes caveat",
+                "probability": 0.79,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "brief",
+                  "op": "contains",
+                  "value": "Northwind"
+                },
+                "passed": true,
+                "actual": "# Sales Brief: Northwind Manufacturing\n\n> **Verification note:** No German company named \"Northwind Manufacturing\" could be verified as an actual operating business as of 2026-09-27. The closest real German entity is **Northwind GmbH (Cuxhaven)** — per commercial register entry (Northdata) and Linke…"
+              },
+              {
+                "check": {
+                  "path": "confidence_notes",
+                  "op": "minLength",
+                  "value": 30
+                },
+                "passed": true,
+                "actual": "High confidence that no prominent German company named 'Northwind Manufacturing' exists in public sources as of 2026-09-27: searches across web, LinkedIn, Crunchbase-style queries, and news returned only fictional case-study entities and unrelated US namesakes. No official website, Wikipedia page, C…"
+              },
+              {
+                "check": {
+                  "path": "sources",
+                  "op": "type",
+                  "value": "array"
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "url": "https://www.northdata.de/Northwind%20GmbH,%20Cuxhaven/Amtsgericht%20Tostedt%20HRB%20211546",
+                    "title": "Northdata – Northwind GmbH, Cuxhaven (commercial register entry)",
+                    "accessed_date": "2026-09-27"
+                  },
+                  {
+                    "url": "https://linkedin.com/company/northwind-gmbh",
+                    "title": "LinkedIn – NORTHWIND GmbH (Cuxhaven, wind energy logistics subsidiary of JZNEE)",
+                    "accessed_date": "2026-09-27"
+                  },
+                  {
+                    "url": "https://www.firminform.de/unternehmen/Northwind-GmbH-Cuxhaven",
+                    "title": "Firminform – Northwind GmbH, Cuxhaven company profile",
+                    "accessed_date": "2026-09-27"
+                  },
+                  {
+                    "url": "https://eng.libretexts.org/Workbench/De_Anza_-_95E/03%3A_Stakeholder_Engagement_and_Communications/3.02%3A_Guide_to_Stakeholder_Management_and_Communications/3.2.02%3A_Case_Study-_The_Forgotten_Stakeholder",
+                    "title": "LibreTexts case study featuring a fictional 'Northwind Manufacturing' (evidence the name is used in teaching materials, not a real firm)",
+                    "accessed_date": "2026-09-27"
+                  },
+                  {
+                    "url": "https://www.northwindinc.com/",
+                    "title": "Northwind Inc. (Arkansas, USA) – unrelated namesake",
+                    "accessed_date": "2026-09-27"
+                  }
+                ]
+              }
+            ],
+            "runId": "run_qbG2Jw_BOMZC",
+            "costUsd": 0.060370866000000016,
+            "durationMs": 68892
+          }
+        ],
+        "costUsd": 0.17899535600000002,
+        "at": 1790530996699
+      },
+      "buildRunId": "run_F2ViehPZ_OQx"
+    }
+  ]
+}

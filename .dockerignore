@@ -1,0 +1,11 @@
+.git
+node_modules
+web/dist
+.env
+out
+coverage
+data/runs
+data/kv
+data/files
+data/bench
+*.log

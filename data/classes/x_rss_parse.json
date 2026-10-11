@@ -1,0 +1,387 @@
+{
+  "type": "x_rss_parse",
+  "title": "RSS/Atom Feed Parser",
+  "category": "data",
+  "description": "Parses raw RSS or Atom feed XML text into a normalized array of items. Handles both RSS <item> and Atom <entry> formats, extracting id/guid, title, link, a plain-text snippet, and the published date. Malformed or missing fields are handled gracefully (missing values become null, unparseable dates are returned as-is).",
+  "whenToUse": "Use when a workflow has fetched raw RSS/Atom XML (e.g. from an HTTP fetch node) and needs it converted into structured item objects for filtering, summarizing, or storage. Pair with an HTTP GET node that returns the feed body as text.",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "raw_xml": {
+        "type": "string",
+        "description": "The raw RSS or Atom feed XML text to parse. May be provided via a template like {{nodes.fetch_feed.output.body}}."
+      },
+      "max_items": {
+        "type": "integer",
+        "description": "Maximum number of items to return (newest-first as they appear in the feed). Defaults to 50.",
+        "minimum": 1,
+        "maximum": 500
+      }
+    },
+    "required": [
+      "raw_xml"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "items": {
+        "type": "array",
+        "description": "Normalized feed items in feed order.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "GUID (RSS) or entry id (Atom), or the link if no id exists, else null."
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Item title, HTML-decoded, or null if missing."
+            },
+            "link": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Item link URL, or null if missing."
+            },
+            "snippet": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Plain-text excerpt from description/summary/content (tags stripped, truncated to ~300 chars), or null."
+            },
+            "published": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Publication date string from the feed (pubDate/published/updated), or null."
+            }
+          }
+        }
+      },
+      "count": {
+        "type": "integer",
+        "description": "Number of items returned."
+      },
+      "feed_format": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "\"rss\", \"atom\", or null if undetectable."
+      }
+    },
+    "required": [
+      "items",
+      "count",
+      "feed_format"
+    ]
+  },
+  "example": {
+    "raw_xml": "<?xml version=\"1.0\"?><rss version=\"2.0\"><channel><item><title>Example Post</title><link>https://example.com/post</link><guid>https://example.com/post</guid><pubDate>Tue, 03 Jun 2025 09:00:00 GMT</pubDate><description>A short summary of the post.</description></item></channel></rss>",
+    "max_items": 50
+  },
+  "sideEffects": false,
+  "secrets": [],
+  "impl": {
+    "kind": "code",
+    "code": "function decodeEntities(s) {\n  if (!s) return s;\n  const map = { amp: '&', lt: '<', gt: '>', quot: '\"', apos: \"'\", nbsp: ' ', '#39': \"'\" };\n  return s\n    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))\n    .replace(/&#(\\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))\n    .replace(/&([a-zA-Z#0-9]+);/g, (m, name) => map[name] !== undefined ? map[name] : m);\n}\n\nfunction stripTags(s) {\n  return decodeEntities(String(s).replace(/<[^>]*>/g, ' ')).replace(/\\s+/g, ' ').trim();\n}\n\nfunction pick(block, tags) {\n  for (const tag of tags) {\n    const re = new RegExp('<' + tag + '(?:\\\\s[^>]*)?>([\\\\s\\\\S]*?)<\\\\/' + tag + '>', 'i');\n    const m = block.match(re);\n    if (m && m[1] !== undefined) {\n      let v = m[1].trim();\n      const cdata = v.match(/^<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>$/);\n      if (cdata) v = cdata[1];\n      return v;\n    }\n  }\n  return null;\n}\n\nfunction extractLink(block, isAtom) {\n  if (isAtom) {\n    const m = block.match(/<link[^>]*href=[\"']([^\"']+)[\"'][^>]*\\/>/i);\n    if (m) return decodeEntities(m[1]);\n    return pick(block, ['link']);\n  }\n  return pick(block, ['link']);\n}\n\nconst raw = String(config.raw_xml || '');\nconst maxItems = Math.max(1, Math.min(500, Number(config.max_items) || 50));\n\nconst isAtom = /<feed[\\s>]/i.test(raw) && /<entry[\\s>]/i.test(raw);\nconst isRss = /<rss[\\s>]|<channel[\\s>]/i.test(raw);\nconst feedFormat = isAtom ? 'atom' : (isRss ? 'rss' : null);\n\nconst itemRe = isAtom ? /<entry(?:\\s[^>]*)?>([\\s\\S]*?)<\\/entry>/gi : /<item(?:\\s[^>]*)?>([\\s\\S]*?)<\\/item>/gi;\n\nconst items = [];\nlet m;\nwhile ((m = itemRe.exec(raw)) !== null && items.length < maxItems) {\n  const block = m[1];\n  const title = pick(block, ['title']);\n  const link = extractLink(block, isAtom);\n  const id = pick(block, isAtom ? ['id'] : ['guid']) || link;\n  const snippetRaw = pick(block, ['description', 'summary', 'content:encoded', 'content']);\n  const snippet = snippetRaw != null ? stripTags(snippetRaw).slice(0, 300) || null : null;\n  const published = pick(block, ['pubDate', 'published', 'updated', 'dc:date']);\n  items.push({\n    id: id ? decodeEntities(id) : null,\n    title: title ? stripTags(title) || null : null,\n    link: link ? decodeEntities(link) : null,\n    snippet: snippet,\n    published: published ? decodeEntities(published) : null\n  });\n}\n\nreturn { items: items, count: items.length, feed_format: feedFormat };",
+    "timeoutMs": 2000
+  },
+  "tests": [
+    {
+      "name": "parses a minimal RSS feed",
+      "config": {
+        "raw_xml": "<?xml version=\"1.0\"?><rss version=\"2.0\"><channel><item><title>AI &amp; ML Weekly</title><link>https://example.com/a</link><guid>guid-1</guid><pubDate>Tue, 03 Jun 2025 09:00:00 GMT</pubDate><description><![CDATA[<p>News about <b>AI</b> research.</p>]]></description></item><item><title>Second Post</title><link>https://example.com/b</link></item></channel></rss>"
+      },
+      "checks": [
+        {
+          "path": "feed_format",
+          "op": "equals",
+          "value": "rss"
+        },
+        {
+          "path": "count",
+          "op": "equals",
+          "value": 2
+        },
+        {
+          "path": "items[0].title",
+          "op": "equals",
+          "value": "AI & ML Weekly"
+        },
+        {
+          "path": "items[0].link",
+          "op": "equals",
+          "value": "https://example.com/a"
+        },
+        {
+          "path": "items[0].snippet",
+          "op": "contains",
+          "value": "AI research"
+        },
+        {
+          "path": "items[1].snippet",
+          "op": "equals",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "parses an Atom feed with link href",
+      "config": {
+        "raw_xml": "<?xml version=\"1.0\"?><feed xmlns=\"http://www.w3.org/2005/Atom\"><entry><id>urn:uuid:1234</id><title>Atom Entry</title><link href=\"https://example.com/atom-entry\" rel=\"alternate\"/><published>2025-06-03T08:00:00Z</published><summary>Short summary text</summary></entry></feed>"
+      },
+      "checks": [
+        {
+          "path": "feed_format",
+          "op": "equals",
+          "value": "atom"
+        },
+        {
+          "path": "items[0].id",
+          "op": "equals",
+          "value": "urn:uuid:1234"
+        },
+        {
+          "path": "items[0].link",
+          "op": "equals",
+          "value": "https://example.com/atom-entry"
+        },
+        {
+          "path": "items[0].published",
+          "op": "equals",
+          "value": "2025-06-03T08:00:00Z"
+        },
+        {
+          "path": "items[0].snippet",
+          "op": "equals",
+          "value": "Short summary text"
+        }
+      ]
+    },
+    {
+      "name": "handles empty and malformed input gracefully",
+      "config": {
+        "raw_xml": "not xml at all"
+      },
+      "checks": [
+        {
+          "path": "items",
+          "op": "type",
+          "value": "array"
+        },
+        {
+          "path": "count",
+          "op": "equals",
+          "value": 0
+        },
+        {
+          "path": "feed_format",
+          "op": "equals",
+          "value": null
+        }
+      ]
+    }
+  ],
+  "version": 1,
+  "createdBy": "anvil",
+  "createdAt": 1790548855866,
+  "approved": true,
+  "status": "passed",
+  "testReport": [
+    {
+      "name": "parses a minimal RSS feed",
+      "passed": true,
+      "output": {
+        "items": [
+          {
+            "id": "guid-1",
+            "title": "AI & ML Weekly",
+            "link": "https://example.com/a",
+            "snippet": "News about AI research.",
+            "published": "Tue, 03 Jun 2025 09:00:00 GMT"
+          },
+          {
+            "id": "https://example.com/b",
+            "title": "Second Post",
+            "link": "https://example.com/b",
+            "snippet": null,
+            "published": null
+          }
+        ],
+        "count": 2,
+        "feed_format": "rss"
+      },
+      "checks": [
+        {
+          "check": {
+            "path": "feed_format",
+            "op": "equals",
+            "value": "rss"
+          },
+          "passed": true,
+          "actual": "rss"
+        },
+        {
+          "check": {
+            "path": "count",
+            "op": "equals",
+            "value": 2
+          },
+          "passed": true,
+          "actual": 2
+        },
+        {
+          "check": {
+            "path": "items[0].title",
+            "op": "equals",
+            "value": "AI & ML Weekly"
+          },
+          "passed": true,
+          "actual": "AI & ML Weekly"
+        },
+        {
+          "check": {
+            "path": "items[0].link",
+            "op": "equals",
+            "value": "https://example.com/a"
+          },
+          "passed": true,
+          "actual": "https://example.com/a"
+        },
+        {
+          "check": {
+            "path": "items[0].snippet",
+            "op": "contains",
+            "value": "AI research"
+          },
+          "passed": true,
+          "actual": "News about AI research."
+        },
+        {
+          "check": {
+            "path": "items[1].snippet",
+            "op": "equals",
+            "value": null
+          },
+          "passed": true,
+          "actual": null
+        }
+      ]
+    },
+    {
+      "name": "parses an Atom feed with link href",
+      "passed": true,
+      "output": {
+        "items": [
+          {
+            "id": "urn:uuid:1234",
+            "title": "Atom Entry",
+            "link": "https://example.com/atom-entry",
+            "snippet": "Short summary text",
+            "published": "2025-06-03T08:00:00Z"
+          }
+        ],
+        "count": 1,
+        "feed_format": "atom"
+      },
+      "checks": [
+        {
+          "check": {
+            "path": "feed_format",
+            "op": "equals",
+            "value": "atom"
+          },
+          "passed": true,
+          "actual": "atom"
+        },
+        {
+          "check": {
+            "path": "items[0].id",
+            "op": "equals",
+            "value": "urn:uuid:1234"
+          },
+          "passed": true,
+          "actual": "urn:uuid:1234"
+        },
+        {
+          "check": {
+            "path": "items[0].link",
+            "op": "equals",
+            "value": "https://example.com/atom-entry"
+          },
+          "passed": true,
+          "actual": "https://example.com/atom-entry"
+        },
+        {
+          "check": {
+            "path": "items[0].published",
+            "op": "equals",
+            "value": "2025-06-03T08:00:00Z"
+          },
+          "passed": true,
+          "actual": "2025-06-03T08:00:00Z"
+        },
+        {
+          "check": {
+            "path": "items[0].snippet",
+            "op": "equals",
+            "value": "Short summary text"
+          },
+          "passed": true,
+          "actual": "Short summary text"
+        }
+      ]
+    },
+    {
+      "name": "handles empty and malformed input gracefully",
+      "passed": true,
+      "output": {
+        "items": [],
+        "count": 0,
+        "feed_format": null
+      },
+      "checks": [
+        {
+          "check": {
+            "path": "items",
+            "op": "type",
+            "value": "array"
+          },
+          "passed": true,
+          "actual": []
+        },
+        {
+          "check": {
+            "path": "count",
+            "op": "equals",
+            "value": 0
+          },
+          "passed": true,
+          "actual": 0
+        },
+        {
+          "check": {
+            "path": "feed_format",
+            "op": "equals",
+            "value": null
+          },
+          "passed": true,
+          "actual": null
+        }
+      ]
+    }
+  ],
+  "history": []
+}

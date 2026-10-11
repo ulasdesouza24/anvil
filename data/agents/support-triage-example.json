@@ -1,0 +1,460 @@
+{
+  "id": "support-triage-example",
+  "name": "Support Triage & Reply",
+  "description": "Classifies a support message, drafts a policy-grounded reply for refund requests, answers how-to questions, and hands everything else to a human.",
+  "createdAt": 1790529199674,
+  "updatedAt": 1790549262488,
+  "currentVersion": 2,
+  "versions": [
+    {
+      "version": 1,
+      "spec": {
+        "specVersion": "anvil/v1",
+        "id": "support-triage-example",
+        "name": "Support Triage & Reply",
+        "description": "Classifies a support message, drafts a policy-grounded reply for refund requests, answers how-to questions, and hands everything else to a human.",
+        "version": 1,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string",
+              "description": "The customer's message"
+            },
+            "policy": {
+              "type": "string",
+              "description": "Refund policy text to ground replies in",
+              "default": "Refunds are available within 30 days of purchase for unused subscriptions. Refunds are issued to the original payment method within 5-7 business days."
+            }
+          },
+          "required": [
+            "message"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "intent": {
+              "type": "string"
+            },
+            "anger": {
+              "type": "number"
+            },
+            "reply": {
+              "type": "string"
+            }
+          }
+        },
+        "nodes": [
+          {
+            "id": "input",
+            "type": "input",
+            "name": "Input",
+            "config": {}
+          },
+          {
+            "id": "classify",
+            "type": "decision",
+            "name": "Classify intent",
+            "description": "Route by what the customer wants; also rate how upset they are",
+            "config": {
+              "state": {
+                "message": "{{input.message}}"
+              },
+              "questions": {
+                "intent": {
+                  "type": "choice",
+                  "instructions": "What does the customer want?",
+                  "criteria": {
+                    "refund": "Asks for money back or to cancel a charge",
+                    "how_to": "Asks how to do something with the product",
+                    "other": "Anything else"
+                  }
+                },
+                "anger": {
+                  "type": "score",
+                  "instructions": "How upset is the customer?",
+                  "criteria": [
+                    "Calm",
+                    "Annoyed",
+                    "Furious"
+                  ]
+                }
+              },
+              "route": "intent",
+              "minConfidence": 0.4
+            }
+          },
+          {
+            "id": "refund_reply",
+            "type": "refine",
+            "name": "Draft refund reply",
+            "description": "Policy-grounded reply that is checked against quality criteria",
+            "config": {
+              "system": "You are a precise, empathetic support agent. Only promise what the policy allows.",
+              "task": "Write a reply to this customer who is asking for a refund.\n\nPOLICY:\n{{input.policy}}\n\nCUSTOMER MESSAGE:\n{{input.message}}",
+              "criteria": [
+                "The reply only promises what the policy allows",
+                "The reply is under 120 words",
+                "The reply states a concrete next step for the customer"
+              ],
+              "maxIterations": 3,
+              "model": "fast"
+            }
+          },
+          {
+            "id": "howto_reply",
+            "type": "llm",
+            "name": "Answer how-to question",
+            "config": {
+              "system": "You are a friendly support agent.",
+              "prompt": "Answer the customer's question in at most 5 short numbered steps.\n\n{{input.message}}",
+              "model": "fast"
+            }
+          },
+          {
+            "id": "handoff_reply",
+            "type": "llm",
+            "name": "Acknowledge & hand off",
+            "config": {
+              "prompt": "Politely acknowledge this message in 2 sentences and say a human teammate will follow up within 24 hours.\n\n{{input.message}}",
+              "model": "fast"
+            }
+          },
+          {
+            "id": "output",
+            "type": "output",
+            "name": "Output",
+            "config": {
+              "value": {
+                "intent": "{{nodes.classify.output.intent}}",
+                "anger": "{{nodes.classify.output.anger}}",
+                "reply": "{{nodes.refund_reply.output.text ?? nodes.howto_reply.output.text ?? nodes.handoff_reply.output.text}}"
+              }
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "input",
+            "to": "classify"
+          },
+          {
+            "from": "classify",
+            "to": "refund_reply",
+            "port": "refund"
+          },
+          {
+            "from": "classify",
+            "to": "howto_reply",
+            "port": "how_to"
+          },
+          {
+            "from": "classify",
+            "to": "handoff_reply",
+            "port": "other"
+          },
+          {
+            "from": "classify",
+            "to": "handoff_reply",
+            "port": "uncertain"
+          },
+          {
+            "from": "refund_reply",
+            "to": "output"
+          },
+          {
+            "from": "howto_reply",
+            "to": "output"
+          },
+          {
+            "from": "handoff_reply",
+            "to": "output"
+          }
+        ],
+        "policy": {
+          "maxCostUsd": 0.25,
+          "maxNodeExecutions": 100,
+          "timeoutMs": 300000,
+          "requireApprovalForSideEffects": false
+        },
+        "tests": [
+          {
+            "id": "t1",
+            "name": "Refund within window",
+            "input": {
+              "message": "Hi, I bought the annual plan 10 days ago and never used it. Can I get my money back?"
+            },
+            "criteria": [
+              "The reply says a refund is possible",
+              "The reply mentions the original payment method or the 5-7 business day timeline"
+            ],
+            "checks": [
+              {
+                "path": "intent",
+                "op": "equals",
+                "value": "refund"
+              }
+            ]
+          },
+          {
+            "id": "t2",
+            "name": "How-to question",
+            "input": {
+              "message": "How do I export my data to CSV?"
+            },
+            "criteria": [
+              "The reply gives step-by-step instructions"
+            ],
+            "checks": [
+              {
+                "path": "reply",
+                "op": "minLength",
+                "value": 20
+              }
+            ]
+          }
+        ],
+        "meta": {
+          "example": true
+        }
+      },
+      "createdAt": 1790529199674,
+      "note": "bundled example"
+    },
+    {
+      "version": 2,
+      "spec": {
+        "specVersion": "anvil/v1",
+        "id": "support-triage-example",
+        "name": "Support Triage & Reply",
+        "description": "Classifies a support message, drafts a policy-grounded reply for refund requests, answers how-to questions, and hands everything else to a human.",
+        "version": 2,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string",
+              "description": "The customer's message"
+            },
+            "policy": {
+              "type": "string",
+              "description": "Refund policy text to ground replies in",
+              "default": "Refunds are available within 30 days of purchase for unused subscriptions. Refunds are issued to the original payment method within 5-7 business days."
+            }
+          },
+          "required": [
+            "message"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "intent": {
+              "type": "string"
+            },
+            "anger": {
+              "type": "number"
+            },
+            "reply": {
+              "type": "string"
+            }
+          }
+        },
+        "nodes": [
+          {
+            "id": "input",
+            "type": "input",
+            "name": "Input",
+            "config": {}
+          },
+          {
+            "id": "classify",
+            "type": "decision",
+            "name": "Classify intent",
+            "description": "Route by what the customer wants; also rate how upset they are",
+            "config": {
+              "state": {
+                "message": "{{input.message}}"
+              },
+              "questions": {
+                "intent": {
+                  "type": "choice",
+                  "instructions": "What does the customer want?",
+                  "criteria": {
+                    "refund": "Asks for money back or to cancel a charge",
+                    "how_to": "Asks how to do something with the product",
+                    "other": "Anything else"
+                  }
+                },
+                "anger": {
+                  "type": "score",
+                  "instructions": "How upset is the customer?",
+                  "criteria": [
+                    "Calm",
+                    "Annoyed",
+                    "Furious"
+                  ]
+                }
+              },
+              "route": "intent",
+              "minConfidence": 0.4
+            }
+          },
+          {
+            "id": "refund_reply",
+            "type": "refine",
+            "name": "Draft refund reply",
+            "description": "Policy-grounded reply that is checked against quality criteria",
+            "config": {
+              "system": "You are a precise, empathetic support agent. Only promise what the policy allows.",
+              "task": "Write a reply to this customer who is asking for a refund.\n\nPOLICY:\n{{input.policy}}\n\nCUSTOMER MESSAGE:\n{{input.message}}",
+              "criteria": [
+                "The reply only promises what the policy allows",
+                "The reply is under 120 words",
+                "The reply states a concrete next step for the customer"
+              ],
+              "maxIterations": 3,
+              "model": "fast"
+            }
+          },
+          {
+            "id": "howto_reply",
+            "type": "llm",
+            "name": "Answer how-to question",
+            "config": {
+              "system": "You are a friendly support agent.",
+              "prompt": "Answer the customer's question in at most 5 short numbered steps.\n\n{{input.message}}",
+              "model": "fast"
+            }
+          },
+          {
+            "id": "handoff_reply",
+            "type": "llm",
+            "name": "Acknowledge & hand off",
+            "config": {
+              "prompt": "Politely acknowledge this message in 2 sentences and say a human teammate will follow up within 24 hours.\n\n{{input.message}}",
+              "model": "fast"
+            }
+          },
+          {
+            "id": "output",
+            "type": "output",
+            "name": "Output",
+            "config": {
+              "value": {
+                "intent": "{{nodes.classify.output.intent}}",
+                "anger": "{{nodes.classify.output.anger}}",
+                "reply": "{{nodes.refund_reply.output.text ?? nodes.howto_reply.output.text ?? nodes.handoff_reply.output.text}}"
+              }
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "input",
+            "to": "classify"
+          },
+          {
+            "from": "classify",
+            "to": "refund_reply",
+            "port": "refund"
+          },
+          {
+            "from": "classify",
+            "to": "howto_reply",
+            "port": "how_to"
+          },
+          {
+            "from": "classify",
+            "to": "handoff_reply",
+            "port": "other"
+          },
+          {
+            "from": "classify",
+            "to": "handoff_reply",
+            "port": "uncertain"
+          },
+          {
+            "from": "refund_reply",
+            "to": "output"
+          },
+          {
+            "from": "howto_reply",
+            "to": "output"
+          },
+          {
+            "from": "handoff_reply",
+            "to": "output"
+          }
+        ],
+        "policy": {
+          "maxCostUsd": 0.25,
+          "maxNodeExecutions": 100,
+          "timeoutMs": 300000,
+          "requireApprovalForSideEffects": false
+        },
+        "tests": [
+          {
+            "id": "t1",
+            "name": "Refund within window",
+            "input": {
+              "message": "Hi, I bought the annual plan 10 days ago and never used it. Can I get my money back?"
+            },
+            "criteria": [
+              "The reply says a refund is possible",
+              "The reply mentions the original payment method or the 5-7 business day timeline"
+            ],
+            "checks": [
+              {
+                "path": "intent",
+                "op": "equals",
+                "value": "refund"
+              }
+            ]
+          },
+          {
+            "id": "t2",
+            "name": "How-to question",
+            "input": {
+              "message": "How do I export my data to CSV?"
+            },
+            "criteria": [
+              "The reply gives step-by-step instructions"
+            ],
+            "checks": [
+              {
+                "path": "reply",
+                "op": "minLength",
+                "value": 20
+              }
+            ]
+          }
+        ],
+        "triggers": [
+          {
+            "id": "helpdesk_form",
+            "description": "Help-desk form submissions",
+            "enabled": true,
+            "input": {
+              "message": "{{payload.body}}"
+            },
+            "type": "webhook",
+            "respond": true
+          }
+        ],
+        "meta": {
+          "example": true,
+          "taxonomy": {
+            "pattern": "classify_route",
+            "domain": "customer_support",
+            "sourceKind": "input_only",
+            "outputKind": "message"
+          }
+        }
+      },
+      "createdAt": 1790549262488,
+      "note": "trigger helpdesk_form saved"
+    }
+  ]
+}

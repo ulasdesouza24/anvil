@@ -1,0 +1,962 @@
+{
+  "id": "city-weather-outlook",
+  "name": "City Weather Outlook Writer",
+  "description": "Geocodes a city, fetches a 3-day Open-Meteo forecast, and writes a friendly one-paragraph outlook with practical clothing advice.",
+  "createdAt": 1790547942995,
+  "updatedAt": 1790547942995,
+  "currentVersion": 1,
+  "versions": [
+    {
+      "version": 1,
+      "spec": {
+        "specVersion": "anvil/v1",
+        "id": "city-weather-outlook",
+        "name": "City Weather Outlook Writer",
+        "description": "Geocodes a city, fetches a 3-day Open-Meteo forecast, and writes a friendly one-paragraph outlook with practical clothing advice.",
+        "version": 1,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string",
+              "description": "City name to forecast for; may include region or country for disambiguation (e.g., 'Springfield, IL')."
+            },
+            "units": {
+              "type": "string",
+              "description": "Temperature units for the output: 'metric' (°C, km/h) or 'imperial' (°F, mph)."
+            }
+          },
+          "required": [
+            "city"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "outlook": {
+              "type": "string"
+            },
+            "forecast_data": {
+              "type": "array"
+            }
+          }
+        },
+        "nodes": [
+          {
+            "id": "input",
+            "type": "input",
+            "name": "Input",
+            "description": "Agent entry point",
+            "config": {}
+          },
+          {
+            "id": "geocode",
+            "type": "x_open_meteo_geocode",
+            "name": "Geocode city",
+            "description": "Resolve the city name to the most populous match with coordinates",
+            "config": {
+              "city": "{{input.city}}",
+              "language": "en"
+            }
+          },
+          {
+            "id": "check_geocode",
+            "type": "router",
+            "name": "Check geocoding result",
+            "description": "Branch to not-found note or forecast fetch",
+            "config": {
+              "rules": [
+                {
+                  "port": "found",
+                  "when": {
+                    "left": "{{nodes.geocode.output.found}}",
+                    "op": "eq",
+                    "right": true
+                  }
+                },
+                {
+                  "port": "not_found",
+                  "when": {
+                    "left": "{{nodes.geocode.output.found}}",
+                    "op": "eq",
+                    "right": false
+                  }
+                }
+              ],
+              "default": "not_found",
+              "mode": "first"
+            }
+          },
+          {
+            "id": "not_found_note",
+            "type": "llm",
+            "name": "Not-found message",
+            "description": "Friendly message when the city cannot be geocoded",
+            "config": {
+              "system": "You are a friendly weather assistant. Be brief and warm.",
+              "prompt": "The city '{{input.city}}' could not be geocoded, so no forecast is available. Write one short friendly sentence telling the user we couldn't find that city and suggesting they try a clearer city name (maybe with a region or country). Do not invent any weather information.",
+              "model": "fast"
+            }
+          },
+          {
+            "id": "fetch_forecast",
+            "type": "x_open_meteo_forecast",
+            "name": "Fetch 3-day forecast",
+            "description": "Get daily min/max temp, precipitation probability and wind for the geocoded coordinates",
+            "config": {
+              "latitude": "{{nodes.geocode.output.latitude}}",
+              "longitude": "{{nodes.geocode.output.longitude}}",
+              "units": "{{input.units ?? 'metric'}}"
+            }
+          },
+          {
+            "id": "validate_days",
+            "type": "code",
+            "name": "Validate & shape forecast",
+            "description": "Validate exactly 3 complete days and build forecast_data plus a trend summary",
+            "config": {
+              "code": "const days = (nodes.fetch_forecast.output.days || []);\nconst units = nodes.fetch_forecast.output.units || 'metric';\nconst windUnits = units === 'imperial' ? 'mph' : 'km/h';\nconst complete = days.length === 3 && days.every(d =>\n  d && d.date && typeof d.temp_min === 'number' && typeof d.temp_max === 'number' &&\n  typeof d.precip_probability === 'number' && typeof d.wind_speed_max === 'number');\nif (!complete) {\n  return { valid: false, forecast_data: [], trend: '', units: units };\n}\nconst forecast_data = days.map(d => ({\n  date: d.date,\n  min_temp: d.temp_min,\n  max_temp: d.temp_max,\n  precipitation_probability_pct: d.precip_probability,\n  wind_speed: d.wind_speed_max,\n  wind_units: windUnits\n}));\nconst warmest = forecast_data.reduce((a, b) => (b.max_temp > a.max_temp ? b : a));\nconst coolest = forecast_data.reduce((a, b) => (b.min_temp < a.min_temp ? b : a));\nconst wettest = forecast_data.reduce((a, b) => (b.precipitation_probability_pct > a.precipitation_probability_pct ? b : a));\nconst trend = 'Warmest day: ' + warmest.date + ' (max ' + warmest.max_temp + '°' + (units === 'imperial' ? 'F' : 'C') + '). Coolest day: ' + coolest.date + ' (min ' + coolest.min_temp + '°' + (units === 'imperial' ? 'F' : 'C') + '). Wettest day: ' + wettest.date + ' (' + wettest.precipitation_probability_pct + '% precipitation probability).';\nreturn { valid: true, forecast_data: forecast_data, trend: trend, units: units };",
+              "timeoutMs": 2000,
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "valid": {
+                    "type": "boolean"
+                  },
+                  "forecast_data": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "date": {
+                          "type": "string"
+                        },
+                        "min_temp": {
+                          "type": "number"
+                        },
+                        "max_temp": {
+                          "type": "number"
+                        },
+                        "precipitation_probability_pct": {
+                          "type": "number"
+                        },
+                        "wind_speed": {
+                          "type": "number"
+                        },
+                        "wind_units": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "date",
+                        "min_temp",
+                        "max_temp",
+                        "precipitation_probability_pct",
+                        "wind_speed",
+                        "wind_units"
+                      ]
+                    }
+                  },
+                  "trend": {
+                    "type": "string"
+                  },
+                  "units": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "valid",
+                  "forecast_data",
+                  "trend",
+                  "units"
+                ]
+              }
+            }
+          },
+          {
+            "id": "write_outlook",
+            "type": "refine",
+            "name": "Write outlook paragraph",
+            "description": "Compose the friendly one-paragraph outlook with clothing advice, checked against quality criteria",
+            "config": {
+              "system": "You are a friendly weather writer. Use ONLY the numbers provided in the forecast data — never invent or alter values. No jargon, no emoji.",
+              "task": "Write exactly one friendly, conversational paragraph (under 150 words) summarizing this 3-day forecast for {{nodes.geocode.output.name}}, {{nodes.geocode.output.country}}.\n\nFORECAST DATA (use only these numbers):\n{{nodes.validate_days.output.forecast_data | json}}\n\nTREND SUMMARY:\n{{nodes.validate_days.output.trend}}\n\nRequirements: mention each day's min/max temperature, precipitation probability, and wind speed; end with concrete clothing advice tied to the actual numbers (umbrella only if precipitation probability is 40% or higher; suggest layers, rain jacket, or sunglasses as appropriate); note the resolved location; use {{nodes.validate_days.output.units}} units consistently.",
+              "criteria": [
+                "The response is exactly one paragraph under 150 words",
+                "Every day's min/max temperature, precipitation probability, and wind speed from the forecast data is mentioned",
+                "No numbers appear that are not present in the forecast data",
+                "Clothing advice is specific and consistent with the numbers (umbrella only when precipitation probability is at least 40%)",
+                "The tone is friendly and conversational with no jargon or emoji",
+                "The resolved location is mentioned"
+              ],
+              "maxIterations": 3,
+              "model": "fast"
+            }
+          },
+          {
+            "id": "final_result",
+            "type": "transform",
+            "name": "Assemble result",
+            "description": "Merge outlook, forecast data and resolved location",
+            "config": {
+              "value": {
+                "outlook": "{{nodes.write_outlook.output.text ?? nodes.not_found_note.output.text}}",
+                "forecast_data": "{{nodes.validate_days.output.forecast_data}}",
+                "resolved_location": {
+                  "name": "{{nodes.geocode.output.name}}",
+                  "country": "{{nodes.geocode.output.country}}"
+                },
+                "geocode_found": "{{nodes.geocode.output.found}}"
+              },
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "outlook": {
+                    "type": "string"
+                  },
+                  "forecast_data": {
+                    "type": "array"
+                  },
+                  "resolved_location": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "country": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "geocode_found": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "outlook",
+                  "forecast_data",
+                  "resolved_location",
+                  "geocode_found"
+                ]
+              }
+            }
+          },
+          {
+            "id": "output",
+            "type": "output",
+            "name": "Output",
+            "description": "Final agent result",
+            "config": {
+              "value": {
+                "outlook": "{{nodes.final_result.output.outlook}}",
+                "forecast_data": "{{nodes.final_result.output.forecast_data}}"
+              }
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "input",
+            "to": "geocode"
+          },
+          {
+            "from": "geocode",
+            "to": "check_geocode"
+          },
+          {
+            "from": "check_geocode",
+            "to": "not_found_note",
+            "port": "not_found"
+          },
+          {
+            "from": "check_geocode",
+            "to": "fetch_forecast",
+            "port": "found"
+          },
+          {
+            "from": "fetch_forecast",
+            "to": "validate_days"
+          },
+          {
+            "from": "validate_days",
+            "to": "write_outlook"
+          },
+          {
+            "from": "geocode",
+            "to": "write_outlook"
+          },
+          {
+            "from": "write_outlook",
+            "to": "final_result"
+          },
+          {
+            "from": "validate_days",
+            "to": "final_result"
+          },
+          {
+            "from": "geocode",
+            "to": "final_result"
+          },
+          {
+            "from": "not_found_note",
+            "to": "final_result"
+          },
+          {
+            "from": "final_result",
+            "to": "output"
+          }
+        ],
+        "policy": {
+          "maxCostUsd": 0.5,
+          "maxNodeExecutions": 500,
+          "timeoutMs": 600000,
+          "requireApprovalForSideEffects": false
+        },
+        "tests": [
+          {
+            "id": "t1",
+            "name": "typical_metric_city",
+            "input": {
+              "city": "Amsterdam",
+              "units": "metric"
+            },
+            "criteria": [
+              "Output is exactly one friendly paragraph under 150 words covering all 3 days with min/max temperature, precipitation probability, and wind speed in metric units.",
+              "Clothing advice is present, specific, and consistent with the forecast numbers (no umbrella advice on a low-rain day).",
+              "forecast_data contains exactly 3 day objects, each with min_temp, max_temp, precipitation_probability, and wind_speed populated, and every number in the paragraph matches forecast_data."
+            ],
+            "checks": [
+              {
+                "path": "forecast_data",
+                "op": "type",
+                "value": "array"
+              },
+              {
+                "path": "forecast_data",
+                "op": "maxLength",
+                "value": 3
+              },
+              {
+                "path": "outlook",
+                "op": "contains",
+                "value": "°C"
+              },
+              {
+                "path": "outlook",
+                "op": "minLength",
+                "value": 80
+              }
+            ]
+          },
+          {
+            "id": "t2",
+            "name": "imperial_disambiguated_city",
+            "input": {
+              "city": "Denver, CO",
+              "units": "imperial"
+            },
+            "criteria": [
+              "Output is one friendly paragraph under 150 words covering all 3 days with min/max temperature in °F and wind in mph, consistently imperial.",
+              "Clothing advice is specific and consistent with the forecast numbers (e.g., layers or warm clothing if temperatures are low).",
+              "forecast_data has exactly 3 day objects with all five fields populated and no fabricated values in the paragraph."
+            ],
+            "checks": [
+              {
+                "path": "forecast_data",
+                "op": "type",
+                "value": "array"
+              },
+              {
+                "path": "outlook",
+                "op": "contains",
+                "value": "°F"
+              },
+              {
+                "path": "outlook",
+                "op": "maxLength",
+                "value": 1000
+              }
+            ]
+          },
+          {
+            "id": "t3",
+            "name": "ambiguous_city_name",
+            "input": {
+              "city": "Springfield"
+            },
+            "criteria": [
+              "Because geocoding is ambiguous, the output after auto-approval is a completed friendly note (not a pending/waiting state) that names the specific Springfield location chosen (e.g., state/country) so the reader knows which city the forecast covers.",
+              "If geocoding fails entirely, the output is a polite not-found note that does not fabricate any forecast numbers or forecast_data.",
+              "Any forecast_data present contains exactly 3 day objects with all five fields populated, and paragraph numbers match it exactly."
+            ],
+            "checks": [
+              {
+                "path": "outlook",
+                "op": "exists"
+              },
+              {
+                "path": "outlook",
+                "op": "minLength",
+                "value": 20
+              }
+            ]
+          }
+        ],
+        "meta": {
+          "builtBy": "anvil-builder",
+          "request": "Given a city name, get the next 3 days of weather forecast (min/max temperature, precipitation probability, wind) and write a friendly one-paragraph outlook with clothing advice.",
+          "taskSpec": {
+            "name": "City Weather Outlook Writer",
+            "agentId": "city-weather-outlook",
+            "summary": "Fetches a 3-day weather forecast for a given city and writes a friendly one-paragraph outlook with practical clothing advice.",
+            "goal": "Given a city name, retrieve the next 3 days of forecast data (min/max temperature, precipitation probability, wind) and produce a warm, readable one-paragraph outlook including what to wear.",
+            "inputs": [
+              {
+                "name": "city",
+                "type": "string",
+                "description": "City name to forecast for; may include region or country for disambiguation (e.g., 'Springfield, IL').",
+                "required": true,
+                "example": "Amsterdam"
+              },
+              {
+                "name": "units",
+                "type": "string",
+                "description": "Temperature units for the output: 'metric' (°C, km/h) or 'imperial' (°F, mph).",
+                "required": false,
+                "example": "metric"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "outlook",
+                "type": "string",
+                "description": "One friendly paragraph covering the 3-day forecast (min/max temps, precipitation probability, wind per day) plus clothing advice."
+              },
+              {
+                "name": "forecast_data",
+                "type": "object",
+                "description": "Structured per-day data: array of 3 objects with date, min_temp, max_temp, precipitation_probability_pct, wind_speed, wind_units."
+              }
+            ],
+            "steps": [
+              "Geocode the city name to a location; if ambiguous, pick the most populous match and note the chosen location in the output.",
+              "Query a weather API (e.g., Open-Meteo) for a 3-day daily forecast: temperature min/max, precipitation probability, and wind speed.",
+              "Convert values to the requested units (default metric).",
+              "Validate the response contains exactly 3 complete days; retry once or fall back to a secondary provider if data is missing.",
+              "Compose one friendly paragraph summarizing the trend across the 3 days, mentioning each day's key conditions, and ending with concrete clothing advice (layers, rain jacket, umbrella, sunglasses, etc.).",
+              "Return the paragraph plus the structured forecast_data object."
+            ],
+            "constraints": [
+              "The outlook must be exactly one paragraph, under 150 words.",
+              "Every day's min/max temperature, precipitation probability, and wind speed must appear in the paragraph or the structured data.",
+              "Use only data returned by the weather source; never invent numbers.",
+              "Tone must be friendly and conversational, no jargon or emoji-heavy formatting.",
+              "Clothing advice must be actionable and tied to the actual forecast (e.g., umbrella only if precipitation probability ≥ 40%).",
+              "If the city cannot be geocoded, say so explicitly rather than guessing."
+            ],
+            "successCriteria": [
+              "Output contains exactly one paragraph of under 150 words in a friendly tone.",
+              "All 3 days are covered with min/max temperature, precipitation probability, and wind speed for each.",
+              "Temperatures and wind units match the requested (or default metric) unit system consistently.",
+              "Clothing advice is present, specific, and consistent with the forecast numbers (e.g., no umbrella advice on a 10% rain day).",
+              "forecast_data contains exactly 3 day objects with all five fields populated.",
+              "No fabricated values: every number in the paragraph matches forecast_data."
+            ],
+            "assumptions": [
+              "Default units are metric (°C, km/h) when 'units' is omitted.",
+              "Use a free no-key API (Open-Meteo) as the primary weather source.",
+              "'Next 3 days' means today plus the following two days, starting from the current date.",
+              "If the city name is ambiguous, resolve to the most populous match and state the resolved location.",
+              "Output language is English."
+            ],
+            "clarifyingQuestions": [],
+            "exampleInputs": [
+              {
+                "city": "Amsterdam"
+              },
+              {
+                "city": "Denver, CO",
+                "units": "imperial"
+              },
+              {
+                "city": "Tokyo",
+                "units": "metric"
+              },
+              {
+                "city": "Springfield"
+              }
+            ]
+          },
+          "plan": {
+            "pattern": "pipeline",
+            "rationale": "A fixed deterministic chain: geocode → fetch forecast → validate/convert → compose paragraph under an explicit quality bar (one paragraph, <150 words, numbers must match data). No branching or open-ended research needed; Open-Meteo geocoding and forecast are simple keyless APIs, so reusable x_ classes are declared for both.",
+            "steps": [
+              {
+                "id": "geocode",
+                "type": "x_open_meteo_geocode",
+                "purpose": "Resolve the city name ({{input.city}}) to a location via Open-Meteo geocoding, picking the most populous match; returns name, latitude, longitude, country. Empty result means the city could not be geocoded.",
+                "dependsOn": [
+                  "input"
+                ]
+              },
+              {
+                "id": "check_geocode",
+                "type": "router",
+                "purpose": "If geocoding returned no location, route to the not-found branch; otherwise continue to the forecast fetch.",
+                "dependsOn": [
+                  "geocode"
+                ]
+              },
+              {
+                "id": "not_found_note",
+                "type": "llm",
+                "purpose": "Write a short friendly message stating the city '{{input.city}}' could not be geocoded and no forecast can be given.",
+                "dependsOn": [
+                  "check_geocode"
+                ],
+                "branch": {
+                  "from": "check_geocode",
+                  "port": "not_found"
+                },
+                "model": "fast"
+              },
+              {
+                "id": "fetch_forecast",
+                "type": "x_open_meteo_forecast",
+                "purpose": "Fetch 3-day daily forecast from Open-Meteo for the geocoded coordinates: temperature_2m_max/min, precipitation_probability_max, wind_speed_10m_max, in the requested unit system ({{input.units ?? 'metric'}}).",
+                "dependsOn": [
+                  "check_geocode"
+                ],
+                "branch": {
+                  "from": "check_geocode",
+                  "port": "found"
+                }
+              },
+              {
+                "id": "validate_days",
+                "type": "code",
+                "purpose": "Validate exactly 3 complete days with all five fields populated; build the forecast_data array (date, min_temp, max_temp, precipitation_probability_pct, wind_speed, wind_units) and a summary of the trend (warmest/coolest/wettest day).",
+                "dependsOn": [
+                  "fetch_forecast"
+                ]
+              },
+              {
+                "id": "write_outlook",
+                "type": "refine",
+                "purpose": "Compose the one-paragraph friendly outlook from forecast_data and the trend summary. Criteria: exactly one paragraph under 150 words; every day's min/max temp, precipitation probability and wind speed mentioned; clothing advice tied to actual numbers (umbrella only if precipitation ≥40%, layers/rain jacket/sunglasses as appropriate); friendly tone, no jargon or emoji; resolved location noted; no numbers not present in forecast_data.",
+                "dependsOn": [
+                  "validate_days",
+                  "geocode"
+                ],
+                "model": "fast"
+              },
+              {
+                "id": "final_result",
+                "type": "transform",
+                "purpose": "Assemble the final object: outlook from write_outlook.text, forecast_data from validate_days, resolved_location from geocode.",
+                "dependsOn": [
+                  "write_outlook",
+                  "validate_days",
+                  "geocode",
+                  "not_found_note"
+                ]
+              }
+            ],
+            "output": "outlook: the refined one-paragraph text (or the not-found message from not_found_note if geocoding failed); forecast_data: array of 3 day objects (date, min_temp, max_temp, precipitation_probability_pct, wind_speed, wind_units) from validate_days; resolved_location: geocoded place name/country from geocode.",
+            "newClasses": [
+              {
+                "type": "x_open_meteo_geocode",
+                "kind": "http",
+                "purpose": "Geocode a free-text city name via Open-Meteo's keyless geocoding API (https://geocoding-api.open-meteo.com/v1/search); returns the most populous match's name, country, latitude, longitude, or empty when not found.",
+                "service": "Open-Meteo Geocoding API"
+              },
+              {
+                "type": "x_open_meteo_forecast",
+                "kind": "http",
+                "purpose": "Fetch a 3-day daily forecast from Open-Meteo (https://api.open-meteo.com/v1/forecast) for given lat/lon: daily temperature_2m_max, temperature_2m_min, precipitation_probability_max, wind_speed_10m_max, in metric or imperial units; returns per-day values with dates.",
+                "service": "Open-Meteo Forecast API"
+              }
+            ]
+          },
+          "pattern": "pipeline",
+          "compile": [
+            {
+              "attempt": 0,
+              "strategy": "autofix",
+              "errors": 0,
+              "warnings": 0
+            }
+          ],
+          "evolution": [
+            {
+              "round": 0,
+              "score": 0.824,
+              "passRate": 0.333,
+              "accepted": true,
+              "change": "initial build"
+            },
+            {
+              "round": 1,
+              "score": 0.606,
+              "passRate": 0.333,
+              "accepted": false,
+              "change": "Replaced the deterministic router 'check_geocode' with a decision node that asks whether the geocoded result is an unambiguous, confident match for the user's query, with minConfidence 0.8 so ambiguous resolutions (e.g. a bare 'Springfield') route to 'uncertain' instead of silently proceeding.; Routed decision ports: 'yes' → fetch_forecast; 'no' and 'uncertain' → not_found_note; added the missing 'uncertain' edge.; Updated not_found_note prompt to cover both unknown and ambiguous city names and to ask for a region/country qualifier, without inventing weather.; validate_days code now rounds temps/wind to 1 decimal and precipitation to whole percent, so forecast_data and the trend string contain clean numbers the writer can quote exactly.; write_outlook task tightened: under 130 words, one sentence per day, use the pre-rounded forecast numbers exactly as written and never print long decimals; maxIterations raised to 4.; final_result forecast_data now falls back to [] when validate_days was skipped on the not-found branch."
+            },
+            {
+              "round": 2,
+              "score": 0.789,
+              "passRate": 0,
+              "accepted": false,
+              "change": "validate_days code now rounds min/max temp and wind speed to 1 decimal place before building forecast_data and trend; write_outlook task now instructs the writer to use the forecast values exactly as provided (already rounded) and keep the paragraph tight"
+            }
+          ],
+          "taxonomy": {
+            "pattern": "pipeline",
+            "domain": "weather_climate",
+            "sourceKind": "api",
+            "outputKind": "report"
+          }
+        }
+      },
+      "createdAt": 1790547942995,
+      "note": "built by Anvil",
+      "score": 0.824,
+      "evaluation": {
+        "version": 1,
+        "passRate": 0.333,
+        "score": 0.824,
+        "results": [
+          {
+            "testId": "t1",
+            "name": "typical_metric_city",
+            "passed": false,
+            "score": 0.754,
+            "output": {
+              "outlook": "Here's your 3-day look at Amsterdam, The Netherlands! On September 28, expect a low of 16.666666666666668°C and a high of 20.611111111111107°C, with a 45% chance of rain and winds around 13.679428232086789 km/h. September 29 is the warmest but also the wettest and windiest day, ranging from 16.38888888888889°C to 24.66666666666667°C, with a 67% rain chance and winds near 21.88708517133886 km/h. September 30 stays mild at 18.277777777777782°C to 23.444444444444443°C, with a 55% rain chance and winds of about 15.127838280190096 km/h. With rain likely all three days, definitely pack an umbrella, and a rain jacket would be a smart choice too. Mornings are cool while afternoons warm up nicely, so layers are your friend. Sunglasses might come in handy between showers, but the umbrella is the real must-have this week!",
+              "forecast_data": [
+                {
+                  "date": "2026-09-28",
+                  "min_temp": 16.666666666666668,
+                  "max_temp": 20.611111111111107,
+                  "precipitation_probability_pct": 45,
+                  "wind_speed": 13.679428232086789,
+                  "wind_units": "km/h"
+                },
+                {
+                  "date": "2026-09-29",
+                  "min_temp": 16.38888888888889,
+                  "max_temp": 24.66666666666667,
+                  "precipitation_probability_pct": 67,
+                  "wind_speed": 21.88708517133886,
+                  "wind_units": "km/h"
+                },
+                {
+                  "date": "2026-09-30",
+                  "min_temp": 18.277777777777782,
+                  "max_temp": 23.444444444444443,
+                  "precipitation_probability_pct": 55,
+                  "wind_speed": 15.127838280190096,
+                  "wind_units": "km/h"
+                }
+              ]
+            },
+            "criteria": [
+              {
+                "criterion": "Output is exactly one friendly paragraph under 150 words covering all 3 days with min/max temperature, precipitation probability, and wind speed in metric units.",
+                "probability": 0.39,
+                "passed": false
+              },
+              {
+                "criterion": "Clothing advice is present, specific, and consistent with the forecast numbers (no umbrella advice on a low-rain day).",
+                "probability": 0.81,
+                "passed": true
+              },
+              {
+                "criterion": "forecast_data contains exactly 3 day objects, each with min_temp, max_temp, precipitation_probability, and wind_speed populated, and every number in the paragraph matches forecast_data.",
+                "probability": 0.08,
+                "passed": false
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "forecast_data",
+                  "op": "type",
+                  "value": "array"
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "date": "2026-09-28",
+                    "min_temp": 16.666666666666668,
+                    "max_temp": 20.611111111111107,
+                    "precipitation_probability_pct": 45,
+                    "wind_speed": 13.679428232086789,
+                    "wind_units": "km/h"
+                  },
+                  {
+                    "date": "2026-09-29",
+                    "min_temp": 16.38888888888889,
+                    "max_temp": 24.66666666666667,
+                    "precipitation_probability_pct": 67,
+                    "wind_speed": 21.88708517133886,
+                    "wind_units": "km/h"
+                  },
+                  {
+                    "date": "2026-09-30",
+                    "min_temp": 18.277777777777782,
+                    "max_temp": 23.444444444444443,
+                    "precipitation_probability_pct": 55,
+                    "wind_speed": 15.127838280190096,
+                    "wind_units": "km/h"
+                  }
+                ]
+              },
+              {
+                "check": {
+                  "path": "forecast_data",
+                  "op": "maxLength",
+                  "value": 3
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "date": "2026-09-28",
+                    "min_temp": 16.666666666666668,
+                    "max_temp": 20.611111111111107,
+                    "precipitation_probability_pct": 45,
+                    "wind_speed": 13.679428232086789,
+                    "wind_units": "km/h"
+                  },
+                  {
+                    "date": "2026-09-29",
+                    "min_temp": 16.38888888888889,
+                    "max_temp": 24.66666666666667,
+                    "precipitation_probability_pct": 67,
+                    "wind_speed": 21.88708517133886,
+                    "wind_units": "km/h"
+                  },
+                  {
+                    "date": "2026-09-30",
+                    "min_temp": 18.277777777777782,
+                    "max_temp": 23.444444444444443,
+                    "precipitation_probability_pct": 55,
+                    "wind_speed": 15.127838280190096,
+                    "wind_units": "km/h"
+                  }
+                ]
+              },
+              {
+                "check": {
+                  "path": "outlook",
+                  "op": "contains",
+                  "value": "°C"
+                },
+                "passed": true,
+                "actual": "Here's your 3-day look at Amsterdam, The Netherlands! On September 28, expect a low of 16.666666666666668°C and a high of 20.611111111111107°C, with a 45% chance of rain and winds around 13.679428232086789 km/h. September 29 is the warmest but also the wettest and windiest day, ranging from 16.38888…"
+              },
+              {
+                "check": {
+                  "path": "outlook",
+                  "op": "minLength",
+                  "value": 80
+                },
+                "passed": true,
+                "actual": "Here's your 3-day look at Amsterdam, The Netherlands! On September 28, expect a low of 16.666666666666668°C and a high of 20.611111111111107°C, with a 45% chance of rain and winds around 13.679428232086789 km/h. September 29 is the warmest but also the wettest and windiest day, ranging from 16.38888…"
+              }
+            ],
+            "runId": "run_g12m8mFm8STK",
+            "costUsd": 0.0008850440000000001,
+            "durationMs": 11406
+          },
+          {
+            "testId": "t2",
+            "name": "imperial_disambiguated_city",
+            "passed": true,
+            "score": 0.885,
+            "output": {
+              "outlook": "Denver is looking lovely to start the week! On Saturday, September 27, expect a mild low of 54.2°F and a warm high of 84.4°F, with just an 8% chance of rain and breezy winds around 19.6 mph. Sunday, September 28, is similar, with a low of 54.8°F, a high of 82°F, a 15% rain chance, and winds near 20 mph. Monday, September 29, turns cooler and wetter, with a low of 56.2°F, a high of only 66.9°F, a 53% chance of precipitation, and gentler winds at 7.4 mph. For the weekend, sunglasses and light layers will serve you well, especially with those gusty winds. On Monday, pack a rain jacket or umbrella since rain is more likely than not, and add a warmer layer for the cooler afternoon. Enjoy Denver!",
+              "forecast_data": [
+                {
+                  "date": "2026-09-27",
+                  "min_temp": 54.2,
+                  "max_temp": 84.4,
+                  "precipitation_probability_pct": 8,
+                  "wind_speed": 19.6,
+                  "wind_units": "mph"
+                },
+                {
+                  "date": "2026-09-28",
+                  "min_temp": 54.8,
+                  "max_temp": 82,
+                  "precipitation_probability_pct": 15,
+                  "wind_speed": 20,
+                  "wind_units": "mph"
+                },
+                {
+                  "date": "2026-09-29",
+                  "min_temp": 56.2,
+                  "max_temp": 66.9,
+                  "precipitation_probability_pct": 53,
+                  "wind_speed": 7.4,
+                  "wind_units": "mph"
+                }
+              ]
+            },
+            "criteria": [
+              {
+                "criterion": "Output is one friendly paragraph under 150 words covering all 3 days with min/max temperature in °F and wind in mph, consistently imperial.",
+                "probability": 0.5,
+                "passed": true
+              },
+              {
+                "criterion": "Clothing advice is specific and consistent with the forecast numbers (e.g., layers or warm clothing if temperatures are low).",
+                "probability": 0.92,
+                "passed": true
+              },
+              {
+                "criterion": "forecast_data has exactly 3 day objects with all five fields populated and no fabricated values in the paragraph.",
+                "probability": 0.89,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "forecast_data",
+                  "op": "type",
+                  "value": "array"
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "date": "2026-09-27",
+                    "min_temp": 54.2,
+                    "max_temp": 84.4,
+                    "precipitation_probability_pct": 8,
+                    "wind_speed": 19.6,
+                    "wind_units": "mph"
+                  },
+                  {
+                    "date": "2026-09-28",
+                    "min_temp": 54.8,
+                    "max_temp": 82,
+                    "precipitation_probability_pct": 15,
+                    "wind_speed": 20,
+                    "wind_units": "mph"
+                  },
+                  {
+                    "date": "2026-09-29",
+                    "min_temp": 56.2,
+                    "max_temp": 66.9,
+                    "precipitation_probability_pct": 53,
+                    "wind_speed": 7.4,
+                    "wind_units": "mph"
+                  }
+                ]
+              },
+              {
+                "check": {
+                  "path": "outlook",
+                  "op": "contains",
+                  "value": "°F"
+                },
+                "passed": true,
+                "actual": "Denver is looking lovely to start the week! On Saturday, September 27, expect a mild low of 54.2°F and a warm high of 84.4°F, with just an 8% chance of rain and breezy winds around 19.6 mph. Sunday, September 28, is similar, with a low of 54.8°F, a high of 82°F, a 15% rain chance, and winds near 20 …"
+              },
+              {
+                "check": {
+                  "path": "outlook",
+                  "op": "maxLength",
+                  "value": 1000
+                },
+                "passed": true,
+                "actual": "Denver is looking lovely to start the week! On Saturday, September 27, expect a mild low of 54.2°F and a warm high of 84.4°F, with just an 8% chance of rain and breezy winds around 19.6 mph. Sunday, September 28, is similar, with a low of 54.8°F, a high of 82°F, a 15% rain chance, and winds near 20 …"
+              }
+            ],
+            "runId": "run_yb4tP8bLBZlh",
+            "costUsd": 0.00021778,
+            "durationMs": 5770
+          },
+          {
+            "testId": "t3",
+            "name": "ambiguous_city_name",
+            "passed": false,
+            "score": 0.834,
+            "output": {
+              "outlook": "Here's your look ahead for Springfield, United States! On September 27, expect a low of 16.11111111111111°C and a high of 24.944444444444446°C, with a 49% chance of rain and winds around 13.196624882719018 km/h — the wettest day of the stretch. September 28 looks much drier, with temperatures between 17.555555555555557°C and 24.833333333333332°C, just a 3% chance of rain, and a gentler 10.460739236301661 km/h breeze. Then things really warm up on September 29, ranging from 16.61111111111111°C to a toasty 31.11111111111111°C, with only a 1% chance of rain but the strongest winds at 18.668396175553735 km/h. Pack an umbrella on the first day since rain is nearly a coin flip, and bring a light layer for the cooler mornings. By the last day, sunglasses are your friend — and dress light, because it will feel like summer!",
+              "forecast_data": [
+                {
+                  "date": "2026-09-27",
+                  "min_temp": 16.11111111111111,
+                  "max_temp": 24.944444444444446,
+                  "precipitation_probability_pct": 49,
+                  "wind_speed": 13.196624882719018,
+                  "wind_units": "km/h"
+                },
+                {
+                  "date": "2026-09-28",
+                  "min_temp": 17.555555555555557,
+                  "max_temp": 24.833333333333332,
+                  "precipitation_probability_pct": 3,
+                  "wind_speed": 10.460739236301661,
+                  "wind_units": "km/h"
+                },
+                {
+                  "date": "2026-09-29",
+                  "min_temp": 16.61111111111111,
+                  "max_temp": 31.11111111111111,
+                  "precipitation_probability_pct": 1,
+                  "wind_speed": 18.668396175553735,
+                  "wind_units": "km/h"
+                }
+              ]
+            },
+            "criteria": [
+              {
+                "criterion": "Because geocoding is ambiguous, the output after auto-approval is a completed friendly note (not a pending/waiting state) that names the specific Springfield location chosen (e.g., state/country) so the reader knows which city the forecast covers.",
+                "probability": 0.88,
+                "passed": true
+              },
+              {
+                "criterion": "If geocoding fails entirely, the output is a polite not-found note that does not fabricate any forecast numbers or forecast_data.",
+                "probability": 0.41,
+                "passed": false
+              },
+              {
+                "criterion": "Any forecast_data present contains exactly 3 day objects with all five fields populated, and paragraph numbers match it exactly.",
+                "probability": 0.88,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "outlook",
+                  "op": "exists"
+                },
+                "passed": true,
+                "actual": "Here's your look ahead for Springfield, United States! On September 27, expect a low of 16.11111111111111°C and a high of 24.944444444444446°C, with a 49% chance of rain and winds around 13.196624882719018 km/h — the wettest day of the stretch. September 28 looks much drier, with temperatures betwee…"
+              },
+              {
+                "check": {
+                  "path": "outlook",
+                  "op": "minLength",
+                  "value": 20
+                },
+                "passed": true,
+                "actual": "Here's your look ahead for Springfield, United States! On September 27, expect a low of 16.11111111111111°C and a high of 24.944444444444446°C, with a 49% chance of rain and winds around 13.196624882719018 km/h — the wettest day of the stretch. September 28 looks much drier, with temperatures betwee…"
+              }
+            ],
+            "runId": "run_wsk1rpORKFUg",
+            "costUsd": 0.000887714,
+            "durationMs": 11706
+          }
+        ],
+        "costUsd": 0.001990538,
+        "at": 1790547751958
+      },
+      "buildRunId": "run_IrN4MtvpdUdz"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "tools": [
+    {
+      "name": "get_order",
+      "description": "Gives an order: id, email, status (processing, shipped, delivered), delivered_days_ago (null when not delivered), carrier, tracking, items [{item_id, name, category, price_usd, opened, returned}].",
+      "parameters": { "type": "object", "properties": { "order_id": { "type": "string" } }, "required": ["order_id"] },
+      "sideEffects": false,
+      "adapter": "mock",
+      "mock": "const db = state.orders || (state.orders = { 'O-501': { id: 'O-501', email: 'sam@example.com', status: 'delivered', delivered_days_ago: 12, carrier: 'UPS', tracking: '1Z999', items: [ { item_id: 'I1', name: 'Wool sweater', category: 'clothing', price_usd: 85, opened: true, returned: false }, { item_id: 'I2', name: 'Wireless earbuds', category: 'electronics', price_usd: 129, opened: true, returned: false } ] }, 'O-502': { id: 'O-502', email: 'kai@example.com', status: 'delivered', delivered_days_ago: 41, carrier: 'FedEx', tracking: '7745', items: [ { item_id: 'I3', name: 'Running shoes', category: 'shoes', price_usd: 110, opened: true, returned: false } ] }, 'O-503': { id: 'O-503', email: 'ana@example.com', status: 'shipped', delivered_days_ago: null, carrier: 'USPS', tracking: '9400', items: [ { item_id: 'I4', name: 'Desk lamp', category: 'home', price_usd: 45, opened: false, returned: false } ] }, 'O-504': { id: 'O-504', email: 'lee@example.com', status: 'processing', delivered_days_ago: null, carrier: null, tracking: null, items: [ { item_id: 'I5', name: 'Phone case', category: 'electronics', price_usd: 19, opened: false, returned: false } ] } }); return db[args.order_id] || { error: 'no order with this id' };"
+    },
+    {
+      "name": "return_item",
+      "description": "Starts the return of one item of an order. Gives ok, the refund amount, and a return label, or an error.",
+      "parameters": { "type": "object", "properties": { "order_id": { "type": "string" }, "item_id": { "type": "string" }, "reason": { "type": "string" } }, "required": ["order_id", "item_id", "reason"] },
+      "sideEffects": true,
+      "adapter": "mock",
+      "mock": "const o = (state.orders || {})[args.order_id]; if (!o) return { error: 'no order with this id (get it first)' }; const it = o.items.find(i => i.item_id === args.item_id); if (!it) return { error: 'no item with this id in the order' }; if (it.returned) return { error: 'the item is already returned' }; it.returned = true; return { ok: true, order_id: o.id, item_id: it.item_id, refund_usd: it.price_usd, label: 'RET-' + o.id + '-' + it.item_id };"
+    }
+  ]
+}

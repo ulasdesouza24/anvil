@@ -1,0 +1,20 @@
+{
+  "tools": [
+    {
+      "name": "get_prescription",
+      "description": "Gives a prescription: rx_id, patient, medicine, controlled (true or false), refills_left, days_of_supply_left.",
+      "parameters": { "type": "object", "properties": { "rx_id": { "type": "string" } }, "required": ["rx_id"] },
+      "sideEffects": false,
+      "adapter": "mock",
+      "mock": "const db = state.rx || (state.rx = { 'RX-11': { rx_id: 'RX-11', patient: 'Maya Ross', medicine: 'Lisinopril 10 mg', controlled: false, refills_left: 2, days_of_supply_left: 4 }, 'RX-12': { rx_id: 'RX-12', patient: 'Maya Ross', medicine: 'Atorvastatin 20 mg', controlled: false, refills_left: 0, days_of_supply_left: 3 }, 'RX-13': { rx_id: 'RX-13', patient: 'Leo Grant', medicine: 'Oxycodone 5 mg', controlled: true, refills_left: 1, days_of_supply_left: 2 }, 'RX-14': { rx_id: 'RX-14', patient: 'Leo Grant', medicine: 'Metformin 500 mg', controlled: false, refills_left: 3, days_of_supply_left: 25 } }); return db[String(args.rx_id).toUpperCase()] || { error: 'no prescription with this id' };"
+    },
+    {
+      "name": "order_refill",
+      "description": "Orders a refill of a prescription for pickup. Gives ok and the pickup date, or an error.",
+      "parameters": { "type": "object", "properties": { "rx_id": { "type": "string" } }, "required": ["rx_id"] },
+      "sideEffects": true,
+      "adapter": "mock",
+      "mock": "const p = (state.rx || {})[String(args.rx_id).toUpperCase()]; if (!p) return { error: 'no prescription with this id (get it first)' }; if (p.refills_left < 1) return { error: 'no refills left' }; p.refills_left -= 1; p.days_of_supply_left += 30; return { ok: true, rx_id: p.rx_id, pickup: 'tomorrow after 10:00', refills_left: p.refills_left };"
+    }
+  ]
+}

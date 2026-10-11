@@ -1,0 +1,1550 @@
+{
+  "id": "contract-risk-clause-reviewer-2",
+  "name": "Contract Risk Clause Reviewer",
+  "description": "Analyzes contract text for risky clauses in five fixed categories, compiles a draft risk report with verbatim quotes, and requires explicit human approval before the report is marked final.",
+  "createdAt": 1790532173821,
+  "updatedAt": 1790532173821,
+  "currentVersion": 1,
+  "versions": [
+    {
+      "version": 1,
+      "spec": {
+        "specVersion": "anvil/v1",
+        "id": "contract-risk-clause-reviewer-2",
+        "name": "Contract Risk Clause Reviewer",
+        "description": "Analyzes contract text for risky clauses in five fixed categories, compiles a draft risk report with verbatim quotes, and requires explicit human approval before the report is marked final.",
+        "version": 1,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "contract_text": {
+              "type": "string",
+              "description": "Full text of the contract to review (plain text or extracted text from a document)."
+            },
+            "contract_title": {
+              "type": "string",
+              "description": "Name or identifier of the contract for labeling the report."
+            },
+            "reviewer_role": {
+              "type": "string",
+              "description": "Role of the human reviewer whose approval is required (e.g., legal counsel). Used for the approval record."
+            },
+            "approval_decision": {
+              "type": "string",
+              "description": "Human decision on the draft report: 'approve' to mark final, or 'revise' with optional feedback."
+            },
+            "revision_feedback": {
+              "type": "string",
+              "description": "Reviewer feedback explaining what to change when approval_decision is 'revise'."
+            }
+          },
+          "required": [
+            "contract_text"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "risk_report": {
+              "type": "object"
+            },
+            "approval_request": {
+              "type": "object"
+            },
+            "categories_checked": {
+              "type": "array"
+            },
+            "draft_report": {
+              "type": "object",
+              "description": "The draft risk report as it was submitted for approval (review_status='draft'), prior to the approval decision."
+            },
+            "approval": {
+              "type": "object",
+              "description": "Record of the approval flow: the requester's requested decision, the reviewer's approval outcome from the human approval gate, reviewer role, and approval timestamp."
+            }
+          }
+        },
+        "nodes": [
+          {
+            "id": "input",
+            "type": "input",
+            "name": "Input",
+            "description": "Receives the contract text and optional labeling/approval fields.",
+            "config": {}
+          },
+          {
+            "id": "normalize",
+            "type": "code",
+            "name": "Normalize & validate contract text",
+            "description": "Validates the text is non-empty and contract-like, normalizes whitespace while preserving clause boundaries, defaults the title, and emits the five fixed categories.",
+            "config": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "valid": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "categories": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "text",
+                  "title",
+                  "valid",
+                  "reason",
+                  "categories"
+                ]
+              },
+              "code": "const raw = (input.contract_text || \"\").trim();\nconst title = (input.contract_title || \"\").trim() || \"Untitled Contract\";\nconst categories = [\"auto-renewal\", \"unlimited-liability\", \"unilateral-changes\", \"data-sharing\", \"non-compete\"];\nif (!raw) {\n  return { text: \"\", title, valid: false, reason: \"contract_text is empty; no review possible.\", categories };\n}\nconst text = raw.replace(/\\r\\n/g, \"\\n\").replace(/[ \\t]+/g, \" \").replace(/\\n{3,}/g, \"\\n\\n\").trim();\nconst words = text.split(/\\s+/).length;\nconst contractLike = words >= 20 && /(agreement|party|parties|contract|terms|hereby|shall|clause|termination|liability|obligation)/i.test(text);\nreturn {\n  text,\n  title,\n  valid: contractLike,\n  reason: contractLike ? \"\" : \"Input does not appear to be a contract (too short or lacking contract language); returning an error report instead of findings.\",\n  categories\n};"
+            }
+          },
+          {
+            "id": "scan_categories",
+            "type": "map",
+            "name": "Scan five risk categories",
+            "description": "Fans out over the five fixed risk categories; per category an LLM extracts findings with verbatim quotes, severity per rubric, plain-English explanations and recommendations.",
+            "config": {
+              "items": "{{nodes.normalize.output.categories}}",
+              "mode": "llm_structured",
+              "system": "You are a meticulous contract risk analyst. You only report clauses that literally appear in the provided text, you never paraphrase or invent clause text, and you never expand scope beyond the single category you are assigned.",
+              "prompt": "You are scanning a contract for ONE risk category only: {{item}}.\n\nCONTRACT TEXT:\n{{nodes.normalize.output.text}}\n\nCATEGORY DEFINITIONS AND SEVERITY RUBRIC (a finding is a clause that CREATES risk for one party):\n- auto-renewal: clauses that renew automatically. Severity: high if perpetual/evergreen obligations; medium if auto-renewal with a short notice window; low if an easy opt-out exists.\n- unlimited-liability: clauses exposing a party to uncapped liability or exclusions that shift risk unfairly. Severity: high if liability is uncapped. IMPORTANT: a liability CAP (e.g., 'liability shall not exceed the fees paid') is a PROTECTIVE, mitigating provision — it is NOT a finding. Only report if liability is genuinely uncapped or an exclusion leaves a party with no recourse at all.\n- unilateral-changes: one party may change terms, pricing, role, or scope at its discretion. Severity: high if changes require no notice or consent; medium if notice is given but no consent is required; low if the other party can reject or exit. Mutual, consensual amendment clauses are NOT findings.\n- data-sharing: sharing, monitoring, or sale of customer/personal data in a way that creates risk. Severity: high if sharing/sale is unrestricted or to unbound third parties. IMPORTANT: sharing limited to bound processors or narrowly scoped (e.g., only to processors under equivalent confidentiality obligations, or only to a successor employer in a sale) is a mitigating provision — report it only if it still creates meaningful exposure, and if so mark severity low and note the scope limit in the explanation.\n- non-compete: restrictions on competing after the relationship ends. Severity: high if broad in scope, geography, or duration (e.g., worldwide, multi-year); low if narrow and mitigated.\n\nRULES:\n1. Each quote MUST be a verbatim excerpt copied character-for-character from the contract text (full sentence(s) or clause). Never paraphrase, shorten mid-sentence, or fabricate text.\n2. location_hint: the nearest section heading or clause number if identifiable, else \"\".\n3. explanation: plain English a non-lawyer understands — what the clause obliges, what practical risk it creates, and for whom. No unexplained legal jargon.\n4. recommendation: one concrete negotiation suggestion.\n5. If the contract contains no clause matching this category — including cases where the only related text is protective or mitigating (a cap, a narrow scope, mutual consent) — set found=false and return an empty findings array. Do NOT invent risk to fill the category.\n6. Only report this category; ignore other clause types.",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "found": {
+                    "type": "boolean",
+                    "description": "True if at least one clause matching the category exists in the text."
+                  },
+                  "findings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "category": {
+                          "type": "string",
+                          "enum": [
+                            "auto-renewal",
+                            "unlimited-liability",
+                            "unilateral-changes",
+                            "data-sharing",
+                            "non-compete"
+                          ]
+                        },
+                        "severity": {
+                          "type": "string",
+                          "enum": [
+                            "high",
+                            "medium",
+                            "low"
+                          ]
+                        },
+                        "quote": {
+                          "type": "string",
+                          "description": "Verbatim excerpt from the contract text."
+                        },
+                        "location_hint": {
+                          "type": "string"
+                        },
+                        "explanation": {
+                          "type": "string"
+                        },
+                        "recommendation": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "category",
+                        "severity",
+                        "quote",
+                        "location_hint",
+                        "explanation",
+                        "recommendation"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "found",
+                  "findings"
+                ]
+              },
+              "model": "fast",
+              "concurrency": 5
+            }
+          },
+          {
+            "id": "compile",
+            "type": "code",
+            "name": "Compile & verify findings",
+            "description": "Flattens per-category results, verifies every quote appears verbatim (whitespace-normalized) in the source, builds categories_checked with found/not-found status, and tallies severities.",
+            "config": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "valid": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "findings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "categories_checked": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "severity_summary": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "valid",
+                  "reason",
+                  "title",
+                  "findings",
+                  "categories_checked",
+                  "severity_summary"
+                ]
+              },
+              "code": "const norm = s => (s || \"\").toLowerCase().replace(/\\s+/g, \" \").trim();\nconst source = norm(nodes.normalize.output.text);\nconst results = nodes.scan_categories.output.results || [];\nconst all = [];\nconst dropped = [];\nfor (const r of results) {\n  for (const f of (r && r.findings) || []) {\n    if (f.quote && source.includes(norm(f.quote))) all.push(f);\n    else dropped.push(f);\n  }\n}\nconst categories = nodes.normalize.output.categories || [];\nconst categories_checked = categories.map(c => {\n  const n = all.filter(f => f.category === c).length;\n  return { category: c, status: n > 0 ? \"found (\" + n + \" findings)\" : \"not-found\" };\n});\nconst counts = { high: 0, medium: 0, low: 0 };\nfor (const f of all) counts[f.severity] = (counts[f.severity] || 0) + 1;\nconst severity_summary = \"high: \" + counts.high + \", medium: \" + counts.medium + \", low: \" + counts.low + \"; total \" + all.length + \" findings\" + (dropped.length ? \"; \" + dropped.length + \" unverified quote(s) dropped\" : \"\");\nreturn {\n  valid: nodes.normalize.output.valid,\n  reason: nodes.normalize.output.reason,\n  title: nodes.normalize.output.title,\n  findings: all,\n  categories_checked,\n  severity_summary\n};"
+            }
+          },
+          {
+            "id": "draft_report",
+            "type": "transform",
+            "name": "Build draft risk report",
+            "description": "Assembles the draft risk_report (review_status='draft', never final) plus an approval_request summarizing findings by severity.",
+            "config": {
+              "value": {
+                "risk_report": {
+                  "contract_title": "{{nodes.compile.output.title}}",
+                  "review_status": "draft",
+                  "approved_by": null,
+                  "approved_at": null,
+                  "findings": "{{nodes.compile.output.findings}}",
+                  "categories_checked": "{{nodes.compile.output.categories_checked}}",
+                  "error": "{{nodes.compile.output.reason ?? null}}",
+                  "disclaimer": "This report explains contractual risk in plain English and suggests negotiation points only. It is not legal advice; consult a qualified attorney before acting."
+                },
+                "approval_request": {
+                  "summary": "{{nodes.compile.output.severity_summary}}",
+                  "reviewer_role": "{{input.reviewer_role ?? \"Reviewer\"}}",
+                  "instructions": "Review the draft risk report. Respond with 'approve' to mark it final, or 'revise' with optional feedback describing what to change (e.g., severity adjustments, findings to add/remove). The report cannot be finalized without explicit approval."
+                }
+              }
+            }
+          },
+          {
+            "id": "check_decision",
+            "type": "decision",
+            "name": "Route on requester approval decision",
+            "description": "Classifies the requester's approval_decision: 'approve' sends the draft to the human approval gate; 'revise' sends it to the revision path.",
+            "config": {
+              "state": {
+                "approval_decision": "{{input.approval_decision ?? \"approve\"}}"
+              },
+              "questions": {
+                "choice": {
+                  "type": "choice",
+                  "instructions": "What is the requester's approval decision for the draft contract risk report? If the value is missing or empty, treat it as 'approve'.",
+                  "criteria": {
+                    "approve": "Mark the draft report final (subject to reviewer sign-off)",
+                    "revise": "Apply the reviewer's feedback and produce a revised draft instead of finalizing"
+                  }
+                }
+              },
+              "route": "choice"
+            }
+          },
+          {
+            "id": "reviewer_approval",
+            "type": "human_approval",
+            "name": "Reviewer approval gate",
+            "description": "Pauses for explicit human sign-off on the draft; approval finalizes, rejection (with optional feedback) triggers a revision cycle.",
+            "config": {
+              "title": "Approve contract risk report?",
+              "message": "Draft risk report for '{{nodes.compile.output.title}}' awaits review by {{input.reviewer_role ?? \"a reviewer\"}}. Approve to mark final, or reject with feedback to trigger a revision.",
+              "payload": {
+                "risk_report": "{{nodes.draft_report.output.risk_report}}",
+                "approval_request": "{{nodes.draft_report.output.approval_request}}"
+              }
+            }
+          },
+          {
+            "id": "finalize",
+            "type": "transform",
+            "name": "Finalize approved report",
+            "description": "On approval: re-emits the report unchanged in content with review_status='final' plus approved_by and approved_at.",
+            "config": {
+              "value": {
+                "risk_report": {
+                  "contract_title": "{{nodes.draft_report.output.risk_report.contract_title}}",
+                  "review_status": "final",
+                  "approved_by": "{{input.reviewer_role ?? \"Reviewer\"}}",
+                  "approved_at": "recorded-at-approval",
+                  "findings": "{{nodes.draft_report.output.risk_report.findings}}",
+                  "categories_checked": "{{nodes.draft_report.output.risk_report.categories_checked}}",
+                  "error": "{{nodes.draft_report.output.risk_report.error}}",
+                  "disclaimer": "This report explains contractual risk in plain English and suggests negotiation points only. It is not legal advice; consult a qualified attorney before acting."
+                },
+                "approval_request": null,
+                "categories_checked": "{{nodes.draft_report.output.risk_report.categories_checked}}"
+              }
+            }
+          },
+          {
+            "id": "revise",
+            "type": "llm_structured",
+            "name": "Apply reviewer feedback",
+            "description": "On rejection: applies the reviewer's feedback — adjusting severities, adding/removing findings, refining explanations — while preserving verbatim quotes from the source text.",
+            "config": {
+              "system": "You are a meticulous contract risk analyst applying a reviewer's feedback to a draft risk report. You never paraphrase or invent clause text: every quote must remain a verbatim excerpt from the contract. Only severity, explanations, recommendations, and the finding set may change. Stay within the five categories.",
+              "prompt": "Apply the reviewer's feedback to this contract risk report.\n\nCONTRACT TEXT (source of truth for verbatim quotes):\n{{nodes.normalize.output.text}}\n\nCURRENT FINDINGS:\n{{nodes.compile.output.findings | json}}\n\nREVIEWER FEEDBACK:\n{{input.revision_feedback ?? nodes.reviewer_approval.output.comment ?? \"No specific feedback; improve clarity and correctness of explanations and severities per the rubric.\"}}\n\nSEVERITY RUBRIC: high = uncapped liability, perpetual/evergreen obligations, broad non-compete, or unrestricted data sharing/sale; medium = auto-renewal with short notice window, unilateral changes with notice but no consent; low = mitigated versions (liability cap exists, opt-out available, narrow scope).\n\nReturn the updated findings array. Keep every quote verbatim from the contract text. Every finding must include category (one of the five), severity (high/medium/low), quote, location_hint, plain-English explanation, and a concrete negotiation recommendation. Add or remove findings only as the feedback requires.",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "findings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "category": {
+                          "type": "string",
+                          "enum": [
+                            "auto-renewal",
+                            "unlimited-liability",
+                            "unilateral-changes",
+                            "data-sharing",
+                            "non-compete"
+                          ]
+                        },
+                        "severity": {
+                          "type": "string",
+                          "enum": [
+                            "high",
+                            "medium",
+                            "low"
+                          ]
+                        },
+                        "quote": {
+                          "type": "string"
+                        },
+                        "location_hint": {
+                          "type": "string"
+                        },
+                        "explanation": {
+                          "type": "string"
+                        },
+                        "recommendation": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "category",
+                        "severity",
+                        "quote",
+                        "location_hint",
+                        "explanation",
+                        "recommendation"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "findings"
+                ]
+              },
+              "model": "balanced"
+            }
+          },
+          {
+            "id": "rebuild_draft",
+            "type": "transform",
+            "name": "Rebuild revised draft",
+            "description": "Rebuilds a new draft risk_report (review_status='draft') and approval_request from the revised findings, resubmitted for approval.",
+            "config": {
+              "value": {
+                "risk_report": {
+                  "contract_title": "{{nodes.compile.output.title}}",
+                  "review_status": "draft",
+                  "approved_by": null,
+                  "approved_at": null,
+                  "findings": "{{nodes.revise.output.findings}}",
+                  "categories_checked": "{{nodes.compile.output.categories_checked}}",
+                  "error": "{{nodes.compile.output.reason ?? null}}",
+                  "disclaimer": "This report explains contractual risk in plain English and suggests negotiation points only. It is not legal advice; consult a qualified attorney before acting."
+                },
+                "approval_request": {
+                  "summary": "Revised draft incorporating reviewer feedback. Findings: {{nodes.revise.output.findings | length}}.",
+                  "reviewer_role": "{{input.reviewer_role ?? \"Reviewer\"}}",
+                  "instructions": "The draft was revised per your feedback. Respond with 'approve' to mark it final, or 'revise' with further feedback. The report cannot be finalized without explicit approval."
+                },
+                "categories_checked": "{{nodes.compile.output.categories_checked}}"
+              }
+            }
+          },
+          {
+            "id": "resolve",
+            "type": "merge",
+            "name": "Resolve approval loop",
+            "description": "Join point after the approval loop: continues with whichever branch resolved — the finalized report or the resubmitted draft awaiting the next approval round.",
+            "config": {
+              "strategy": "first"
+            }
+          },
+          {
+            "id": "output",
+            "type": "output",
+            "name": "Output",
+            "description": "Returns the risk_report, approval_request, and categories_checked.",
+            "config": {
+              "value": {
+                "risk_report": "{{nodes.resolve.output.risk_report}}",
+                "draft_report": "{{nodes.draft_report.output.risk_report}}",
+                "approval": {
+                  "requested_decision": "{{input.approval_decision ?? \"approve\"}}",
+                  "reviewer_approved": "{{nodes.reviewer_approval.output.approved ?? null}}",
+                  "reviewer_role": "{{input.reviewer_role ?? \"Reviewer\"}}",
+                  "reviewer_comment": "{{nodes.reviewer_approval.output.comment ?? null}}",
+                  "approved_at": "recorded-at-approval"
+                },
+                "approval_request": "{{nodes.resolve.output.approval_request}}",
+                "categories_checked": "{{nodes.resolve.output.categories_checked}}"
+              }
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "input",
+            "to": "normalize"
+          },
+          {
+            "from": "normalize",
+            "to": "scan_categories"
+          },
+          {
+            "from": "scan_categories",
+            "to": "compile"
+          },
+          {
+            "from": "compile",
+            "to": "draft_report"
+          },
+          {
+            "from": "draft_report",
+            "to": "check_decision"
+          },
+          {
+            "from": "check_decision",
+            "to": "reviewer_approval",
+            "port": "approve"
+          },
+          {
+            "from": "check_decision",
+            "to": "revise",
+            "port": "revise"
+          },
+          {
+            "from": "reviewer_approval",
+            "to": "finalize",
+            "port": "approved"
+          },
+          {
+            "from": "reviewer_approval",
+            "to": "revise",
+            "port": "rejected"
+          },
+          {
+            "from": "finalize",
+            "to": "resolve"
+          },
+          {
+            "from": "revise",
+            "to": "rebuild_draft"
+          },
+          {
+            "from": "resolve",
+            "to": "output"
+          },
+          {
+            "from": "rebuild_draft",
+            "to": "resolve"
+          }
+        ],
+        "policy": {
+          "maxCostUsd": 0.5,
+          "maxNodeExecutions": 500,
+          "timeoutMs": 600000,
+          "requireApprovalForSideEffects": false
+        },
+        "tests": [
+          {
+            "id": "t1",
+            "name": "typical_saas_contract_draft_then_approved",
+            "input": {
+              "contract_text": "Section 8. Liability. In no event shall Provider be liable for any indirect, incidental, or consequential damages, and Provider's total aggregate liability shall not exceed the fees paid in the preceding twelve (12) months. Section 12. Term. This Agreement shall automatically renew for successive one-year terms unless either party gives written notice of non-renewal at least ninety (90) days before the end of the then-current term.",
+              "contract_title": "Vendor SaaS Agreement 2024",
+              "reviewer_role": "Legal Counsel",
+              "approval_decision": "approve"
+            },
+            "criteria": [
+              "The output contains a findings array where every finding has a verbatim quote appearing in the input contract_text and a category among the five fixed categories with severity high/medium/low.",
+              "categories_checked lists all five categories, each marked found or not-found.",
+              "The report shows a draft state followed by an approval decision of 'approve', and the final report records approved_by and approved_at.",
+              "Explanations are plain English and state the practical risk."
+            ],
+            "checks": [
+              {
+                "path": "risk_report.findings",
+                "op": "exists"
+              },
+              {
+                "path": "risk_report.review_status",
+                "op": "equals",
+                "value": "final"
+              },
+              {
+                "path": "risk_report.approved_by",
+                "op": "exists"
+              },
+              {
+                "path": "risk_report.approved_at",
+                "op": "exists"
+              },
+              {
+                "path": "categories_checked",
+                "op": "exists"
+              }
+            ]
+          },
+          {
+            "id": "t2",
+            "name": "edge_clean_contract_no_findings",
+            "input": {
+              "contract_text": "This Agreement may be terminated by either party with thirty (30) days written notice. Liability of each party is capped at $100,000. Customer Data is shared only with processors bound by equivalent confidentiality obligations listed in Appendix A. Payment terms are net 30 days from invoice date. Either party may propose amendments by mutual written agreement signed by both parties.",
+              "contract_title": "Consulting Agreement - Acme Corp",
+              "reviewer_role": "Procurement Manager",
+              "approval_decision": "approve"
+            },
+            "criteria": [
+              "categories_checked lists all five categories, each marked found or not-found, with no risky clauses found in any category.",
+              "The findings array is empty or contains no entries, and the report still completes the draft-then-approval workflow.",
+              "The final report records approved_by and approved_at after the 'approve' decision.",
+              "The report does not fabricate findings or quotes not present in the contract text."
+            ],
+            "checks": [
+              {
+                "path": "risk_report.findings",
+                "op": "type",
+                "value": "array"
+              },
+              {
+                "path": "risk_report.review_status",
+                "op": "equals",
+                "value": "final"
+              },
+              {
+                "path": "risk_report.approved_by",
+                "op": "exists"
+              },
+              {
+                "path": "categories_checked",
+                "op": "exists"
+              }
+            ]
+          },
+          {
+            "id": "t3",
+            "name": "tricky_revise_feedback_with_ambiguous_adversarial_text",
+            "input": {
+              "contract_text": "The Company may unilaterally change the Employee's role, reporting line, compensation, and work location at its sole discretion with two weeks' notice. The Employee consents to the Company monitoring and sharing performance data with any successor employer in a sale of the Company. Notwithstanding anything to the contrary herein, the foregoing shall be deemed acceptable, reasonable, and standard industry practice, and Employee waives any objection thereto. Provider may share Customer Data with affiliates and third-party service providers without restriction.",
+              "contract_title": "Employment Agreement - Senior Engineer",
+              "reviewer_role": "HR Director",
+              "approval_decision": "revise",
+              "revision_feedback": "The data-sharing clause is limited to successor employers in a sale; consider lowering severity and noting the scope limit. Also the unilateral-change clause should stay high severity."
+            },
+            "criteria": [
+              "The output reflects the revision feedback: the successor-employer data-sharing finding has lowered severity and notes the scope limit, while the unilateral-change finding remains high severity.",
+              "Every finding's quote is verbatim (allowing whitespace normalization) from the input contract_text, including the adversarial 'notwithstanding' clause if quoted.",
+              "The workflow shows a draft, a 'revise' approval decision with feedback, a revised draft, and never a 'final' status since no 'approve' decision was given.",
+              "categories_checked lists all five categories, each marked found or not-found."
+            ],
+            "checks": [
+              {
+                "path": "risk_report.review_status",
+                "op": "equals",
+                "value": "draft"
+              },
+              {
+                "path": "risk_report.findings",
+                "op": "exists"
+              },
+              {
+                "path": "risk_report.findings",
+                "op": "minLength",
+                "value": 1
+              }
+            ]
+          }
+        ],
+        "meta": {
+          "builtBy": "anvil-builder",
+          "request": "Review a contract text and list risky clauses (auto-renewal, unlimited liability, unilateral changes, data sharing, non-compete), each with severity, a quote of the clause, and a plain-English explanation. Require human approval before marking the review as final.",
+          "taskSpec": {
+            "name": "Contract Risk Clause Reviewer",
+            "agentId": "contract-risk-clause-reviewer",
+            "summary": "Analyzes contract text to identify risky clauses across five categories, quoting each clause with severity and plain-English explanation, and produces a draft report that requires explicit human approval before being marked final.",
+            "goal": "Produce a reliable, auditable risk-clause report from raw contract text, with a two-state workflow (draft → human-approved final) so no review is finalized without a human sign-off.",
+            "inputs": [
+              {
+                "name": "contract_text",
+                "type": "string",
+                "description": "Full text of the contract to review (plain text or extracted text from a document).",
+                "required": true,
+                "example": "This Agreement shall automatically renew for successive one-year terms unless either party provides written notice of non-renewal at least ninety (90) days prior to the end of the current term..."
+              },
+              {
+                "name": "contract_title",
+                "type": "string",
+                "description": "Name or identifier of the contract for labeling the report (e.g., filename or agreement title).",
+                "required": false,
+                "example": "Vendor SaaS Agreement 2024"
+              },
+              {
+                "name": "reviewer_role",
+                "type": "string",
+                "description": "Role of the human reviewer whose approval is required (e.g., legal counsel, procurement manager). Used for the approval record.",
+                "required": false,
+                "example": "Legal Counsel"
+              },
+              {
+                "name": "approval_decision",
+                "type": "string",
+                "description": "Human decision on the draft report: 'approve' to mark final, or 'revise' with optional feedback to trigger a revision cycle.",
+                "required": false,
+                "example": "approve"
+              },
+              {
+                "name": "revision_feedback",
+                "type": "string",
+                "description": "Reviewer feedback explaining what to change when approval_decision is 'revise'.",
+                "required": false,
+                "example": "Severity of the auto-renewal clause seems too high given the 90-day notice window; downgrade to medium."
+              }
+            ],
+            "outputs": [
+              {
+                "name": "risk_report",
+                "type": "object",
+                "description": "Draft or final report containing: contract_title, review_status ('draft' | 'final'), approved_by, approved_at, and findings array. Each finding has: category (one of auto-renewal, unlimited-liability, unilateral-changes, data-sharing, non-compete), severity (high | medium | low), quote (verbatim clause text), location_hint (nearby section/heading if identifiable), explanation (plain-English summary of the risk), and recommendation (suggested negotiation point)."
+              },
+              {
+                "name": "approval_request",
+                "type": "object",
+                "description": "When review_status is 'draft': a summary of findings count by severity and a request for human approval, with instructions to respond with approve/revise plus optional feedback."
+              },
+              {
+                "name": "categories_checked",
+                "type": "array",
+                "description": "List of all five risk categories with a per-category status: found (N findings) or not-found, so absence of risk is explicit rather than implied."
+              }
+            ],
+            "steps": [
+              "Receive contract_text (and optional contract_title); normalize whitespace and preserve clause boundaries.",
+              "Scan the full text for each of the five risk categories in turn: auto-renewal, unlimited liability, unilateral changes, data sharing, non-compete.",
+              "For each match, extract the verbatim quote of the clause (full sentence(s) or clause, not paraphrase) and note the nearest section heading or clause number as location_hint.",
+              "Assign severity per category using the rubric: high = uncapped liability, perpetual/evergreen obligations, broad non-compete, or unrestricted data sharing/sale; medium = auto-renewal with short notice window, unilateral changes with notice but no consent; low = mitigated versions (e.g., liability cap exists, opt-out available).",
+              "Write a plain-English explanation for each finding (no legal jargon; state what the clause obliges, what risk it creates, and for whom) plus a concrete negotiation recommendation.",
+              "Compile categories_checked listing all five categories with found/not-found status.",
+              "Emit risk_report with review_status='draft' and approval_request summarizing findings by severity; do NOT mark final.",
+              "Wait for human approval_decision. If 'approve', set review_status='final', record approved_by (reviewer_role or reviewer identity) and approved_at timestamp, and re-emit the final risk_report unchanged in content.",
+              "If 'revise', apply revision_feedback (adjust severity, add/remove findings, refine explanations), re-emit a new draft with approval_request, and repeat until approved."
+            ],
+            "constraints": [
+              "Never mark a review as final without an explicit human approval_decision of 'approve'; the draft state is mandatory.",
+              "Quotes must be verbatim excerpts from contract_text; never paraphrase or fabricate clause text.",
+              "Only report findings in the five specified categories; do not expand scope to other clause types.",
+              "Explanations must be plain English understandable by a non-lawyer; no unexplained legal terms.",
+              "Every finding must include all fields: category, severity, quote, explanation, recommendation.",
+              "If a category has no matching clause, report it explicitly as not-found in categories_checked rather than omitting it.",
+              "Do not provide legal advice beyond risk explanation and negotiation suggestions; include a disclaimer that this is not legal advice.",
+              "If contract_text is empty, unreadable, or clearly not a contract, return an error report instead of findings.",
+              "On revision, preserve verbatim quotes from the source text; only severity, explanations, recommendations, and finding set may change."
+            ],
+            "successCriteria": [
+              "Output contains a findings array where every entry has a verbatim quote that appears (allowing whitespace normalization) in the input contract_text.",
+              "Every finding's category is one of the five specified categories and severity is one of high/medium/low.",
+              "categories_checked lists all five categories, each marked found or not-found.",
+              "The initial output has review_status='draft'; no output ever has review_status='final' unless preceded by an approval_decision of 'approve'.",
+              "Final report records approved_by and approved_at.",
+              "Each explanation is plain English (no undefined legal jargon) and states the practical risk.",
+              "If revision_feedback was provided, the revised draft reflects it (e.g., changed severity) while quotes remain verbatim from the source."
+            ],
+            "assumptions": [
+              "Input is plain text of one contract; PDF/DOCX extraction is handled upstream.",
+              "Contracts are in English; other languages are out of scope for v1.",
+              "Severity rubric defaults (high/medium/low as described in steps) are acceptable unless the reviewer overrides via feedback.",
+              "The approval loop is conversational: the agent emits a draft and waits; a single approver suffices.",
+              "No persistent memory of prior contracts is needed; each review is self-contained.",
+              "Recommendations are negotiation suggestions, not legal advice; a disclaimer is included in every report."
+            ],
+            "clarifyingQuestions": [
+              "Should approval be captured via a named individual (for audit trail) or is a role-level approval sufficient?",
+              "Are there organization-specific severity thresholds (e.g., any uncapped liability is always 'blocker') that should override the default rubric?"
+            ],
+            "exampleInputs": [
+              {
+                "contract_text": "Section 8. Liability. In no event shall Provider be liable for any indirect, incidental, or consequential damages, and Provider's total aggregate liability shall not exceed the fees paid in the preceding twelve (12) months. Section 12. Term. This Agreement shall automatically renew for successive one-year terms unless either party gives written notice of non-renewal at least ninety (90) days before the end of the then-current term.",
+                "contract_title": "Vendor SaaS Agreement 2024",
+                "reviewer_role": "Legal Counsel"
+              },
+              {
+                "contract_text": "Customer agrees that Provider may modify the terms of this Agreement at any time upon posting to its website, and continued use constitutes acceptance. Provider may share Customer Data with affiliates and third-party service providers without restriction. Employee shall not engage in any competing business worldwide for a period of three (3) years following termination.",
+                "contract_title": "Master Services Agreement - Draft 3"
+              },
+              {
+                "contract_text": "This Agreement may be terminated by either party with thirty (30) days written notice. Liability of each party is capped at $100,000. Customer Data is shared only with processors bound by equivalent confidentiality obligations listed in Appendix A.",
+                "contract_title": "Consulting Agreement - Acme Corp",
+                "reviewer_role": "Procurement Manager",
+                "approval_decision": "approve"
+              },
+              {
+                "contract_text": "The Company may unilaterally change the Employee's role, reporting line, compensation, and work location at its sole discretion with two weeks' notice. The Employee consents to the Company monitoring and sharing performance data with any successor employer in a sale of the Company.",
+                "contract_title": "Employment Agreement - Senior Engineer",
+                "reviewer_role": "HR Director",
+                "approval_decision": "revise",
+                "revision_feedback": "The data-sharing clause is limited to successor employers in a sale; consider lowering severity and noting the scope limit."
+              }
+            ]
+          },
+          "plan": {
+            "pattern": "human_in_loop",
+            "rationale": "The task is a deterministic pipeline (normalize → per-category extraction → compile report) whose finalization is gated by a mandatory human approval loop. Findings are extracted per category via a map fan-out (five categories, structured output with verbatim quotes), compiled with code, then held at human_approval. Rejection triggers a revision step that loops back to approval; approval stamps approved_by/approved_at and emits the final report.",
+            "steps": [
+              {
+                "id": "normalize",
+                "type": "code",
+                "purpose": "Validate contract_text is non-empty and contract-like; normalize whitespace while preserving clause/sentence boundaries; default contract_title. Returns {text, title, valid, reason}.",
+                "dependsOn": [
+                  "input"
+                ]
+              },
+              {
+                "id": "scan_categories",
+                "type": "map",
+                "purpose": "Fan out over the five fixed categories (auto-renewal, unlimited-liability, unilateral-changes, data-sharing, non-compete). For each, an llm_structured step extracts findings from {{nodes.normalize.output.text}} with schema: findings[] each {category, severity(high|medium|low per rubric), quote (verbatim excerpt), location_hint, explanation (plain English), recommendation}, plus found flag. Verbatim-quote instruction enforced in prompt.",
+                "dependsOn": [
+                  "normalize"
+                ],
+                "model": "fast"
+              },
+              {
+                "id": "compile",
+                "type": "code",
+                "purpose": "Flatten map results into a findings array; verify each quote appears (whitespace-normalized) in the source text, dropping/flagging any that fail; build categories_checked listing all five categories as 'found (N findings)' or 'not-found'; tally severity counts.",
+                "dependsOn": [
+                  "scan_categories"
+                ]
+              },
+              {
+                "id": "draft_report",
+                "type": "transform",
+                "purpose": "Build the draft risk_report: contract_title, review_status='draft', approved_by=null, approved_at=null, findings, categories_checked, and a not-legal-advice disclaimer; plus approval_request summarizing findings by severity with approve/revise instructions.",
+                "dependsOn": [
+                  "compile"
+                ]
+              },
+              {
+                "id": "reviewer_approval",
+                "type": "human_approval",
+                "purpose": "Pause and present the draft report + approval_request to the reviewer (reviewer_role recorded in payload). Ports: approved / rejected. Rejection carries optional feedback (revision_feedback).",
+                "dependsOn": [
+                  "draft_report"
+                ]
+              },
+              {
+                "id": "finalize",
+                "type": "transform",
+                "purpose": "On the approved port: re-emit the report unchanged in content but with review_status='final', approved_by (reviewer identity/role from approval), approved_at timestamp.",
+                "dependsOn": [
+                  "reviewer_approval"
+                ],
+                "branch": {
+                  "from": "reviewer_approval",
+                  "port": "approved"
+                }
+              },
+              {
+                "id": "revise",
+                "type": "llm_structured",
+                "purpose": "On the rejected port: apply the reviewer's feedback — adjust severities, add/remove findings, refine explanations/recommendations — while preserving verbatim quotes from the source text; returns the updated findings array.",
+                "dependsOn": [
+                  "reviewer_approval"
+                ],
+                "branch": {
+                  "from": "reviewer_approval",
+                  "port": "rejected"
+                },
+                "model": "balanced"
+              },
+              {
+                "id": "rebuild_draft",
+                "type": "transform",
+                "purpose": "Rebuild a new draft risk_report (review_status='draft') and approval_request from the revised findings, then loop back into reviewer_approval.",
+                "dependsOn": [
+                  "revise",
+                  "compile"
+                ]
+              },
+              {
+                "id": "resolve",
+                "type": "merge",
+                "purpose": "Join point after the approval loop (strategy 'first'): continues with whichever branch resolved — the finalized report or the re-submitted draft awaiting the next approval round.",
+                "dependsOn": [
+                  "finalize",
+                  "rebuild_draft"
+                ]
+              }
+            ],
+            "output": "risk_report: from finalize (approved branch: review_status='final', approved_by, approved_at, findings, categories_checked, disclaimer) or rebuild_draft (rejected branch: new draft awaiting approval). approval_request: from draft_report/rebuild_draft when status is 'draft' (severity counts + approve/revise instructions). categories_checked: from compile, all five categories with found/not-found status. If normalize marks the text invalid, the report is an error report instead of findings."
+          },
+          "pattern": "human_in_loop",
+          "compile": [
+            {
+              "attempt": 0,
+              "strategy": "autofix",
+              "errors": 8,
+              "warnings": 0
+            },
+            {
+              "attempt": 1,
+              "strategy": "patch",
+              "errors": 0,
+              "warnings": 0
+            }
+          ],
+          "evolution": [
+            {
+              "round": 0,
+              "score": 0.712,
+              "passRate": 0,
+              "accepted": true,
+              "change": "initial build"
+            },
+            {
+              "round": 1,
+              "score": 0.901,
+              "passRate": 0.667,
+              "accepted": true,
+              "change": "Add a decision node 'check_decision' after draft_report that routes on input.approval_decision: 'approve' → reviewer_approval gate, 'revise' → revise path.; Rewire edges accordingly (human_approval gate and its approved/rejected ports are preserved).; Harden scan_categories prompt: mitigating/protective clauses (liability caps, narrow data-sharing limits, mutual termination, mutual amendment) must NOT be reported as findings; only clauses that create risk count.; Enrich the output node with an approval_record (decision, reviewer, comment) and the draft review status so the draft→decision→final progression is visible."
+            },
+            {
+              "round": 2,
+              "score": 0.925,
+              "passRate": 0.667,
+              "accepted": true,
+              "change": "Add 'draft_report' (the pre-approval draft risk_report from draft_report node) to the output node's value so the draft state is visible in the final result.; Add an 'approval' record to the output showing the requester's approval_decision, the reviewer approval result (approved/comment from the human_approval gate), reviewer_role, and approved_at — demonstrating the 'approve' decision without bypassing the gate.; Declare 'draft_report' and 'approval' in outputSchema.properties so the new fields are part of the agent's contract."
+            }
+          ],
+          "taxonomy": {
+            "pattern": "human_in_loop",
+            "domain": "legal_compliance",
+            "sourceKind": "input_only",
+            "outputKind": "report"
+          }
+        }
+      },
+      "createdAt": 1790532173821,
+      "note": "built by Anvil",
+      "score": 0.925,
+      "evaluation": {
+        "version": 1,
+        "passRate": 0.667,
+        "score": 0.925,
+        "results": [
+          {
+            "testId": "t1",
+            "name": "typical_saas_contract_draft_then_approved",
+            "passed": true,
+            "score": 0.982,
+            "output": {
+              "risk_report": {
+                "contract_title": "Vendor SaaS Agreement 2024",
+                "review_status": "final",
+                "approved_by": "Legal Counsel",
+                "approved_at": "recorded-at-approval",
+                "findings": [
+                  {
+                    "category": "auto-renewal",
+                    "severity": "medium",
+                    "quote": "This Agreement shall automatically renew for successive one-year terms unless either party gives written notice of non-renewal at least ninety (90) days before the end of the then-current term.",
+                    "location_hint": "Section 12. Term",
+                    "explanation": "The contract renews itself for another full year each time unless a party actively sends written notice at least 90 days before the current term ends. The practical risk is missing that deadline — a party could be locked into another year (and another year's fees) simply by anviltting to send notice in time. The 90-day window is fairly long, so the risk is moderate rather than severe, and either party can opt out.",
+                    "recommendation": "Negotiate to shorten the notice window (e.g., 30 days) or require the provider to send a renewal reminder before the notice deadline, and add a right to terminate for convenience with reasonable notice instead of only annual opt-out."
+                  }
+                ],
+                "categories_checked": [
+                  {
+                    "category": "auto-renewal",
+                    "status": "found (1 findings)"
+                  },
+                  {
+                    "category": "unlimited-liability",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "unilateral-changes",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "data-sharing",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "non-compete",
+                    "status": "not-found"
+                  }
+                ],
+                "error": null,
+                "disclaimer": "This report explains contractual risk in plain English and suggests negotiation points only. It is not legal advice; consult a qualified attorney before acting."
+              },
+              "draft_report": {
+                "contract_title": "Vendor SaaS Agreement 2024",
+                "review_status": "draft",
+                "approved_by": null,
+                "approved_at": null,
+                "findings": [
+                  {
+                    "category": "auto-renewal",
+                    "severity": "medium",
+                    "quote": "This Agreement shall automatically renew for successive one-year terms unless either party gives written notice of non-renewal at least ninety (90) days before the end of the then-current term.",
+                    "location_hint": "Section 12. Term",
+                    "explanation": "The contract renews itself for another full year each time unless a party actively sends written notice at least 90 days before the current term ends. The practical risk is missing that deadline — a party could be locked into another year (and another year's fees) simply by anviltting to send notice in time. The 90-day window is fairly long, so the risk is moderate rather than severe, and either party can opt out.",
+                    "recommendation": "Negotiate to shorten the notice window (e.g., 30 days) or require the provider to send a renewal reminder before the notice deadline, and add a right to terminate for convenience with reasonable notice instead of only annual opt-out."
+                  }
+                ],
+                "categories_checked": [
+                  {
+                    "category": "auto-renewal",
+                    "status": "found (1 findings)"
+                  },
+                  {
+                    "category": "unlimited-liability",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "unilateral-changes",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "data-sharing",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "non-compete",
+                    "status": "not-found"
+                  }
+                ],
+                "error": null,
+                "disclaimer": "This report explains contractual risk in plain English and suggests negotiation points only. It is not legal advice; consult a qualified attorney before acting."
+              },
+              "approval": {
+                "requested_decision": "approve",
+                "reviewer_approved": true,
+                "reviewer_role": "Legal Counsel",
+                "reviewer_comment": "auto-approved (evaluation mode)",
+                "approved_at": "recorded-at-approval"
+              },
+              "approval_request": null,
+              "categories_checked": [
+                {
+                  "category": "auto-renewal",
+                  "status": "found (1 findings)"
+                },
+                {
+                  "category": "unlimited-liability",
+                  "status": "not-found"
+                },
+                {
+                  "category": "unilateral-changes",
+                  "status": "not-found"
+                },
+                {
+                  "category": "data-sharing",
+                  "status": "not-found"
+                },
+                {
+                  "category": "non-compete",
+                  "status": "not-found"
+                }
+              ]
+            },
+            "criteria": [
+              {
+                "criterion": "The output contains a findings array where every finding has a verbatim quote appearing in the input contract_text and a category among the five fixed categories with severity high/medium/low.",
+                "probability": 0.95,
+                "passed": true
+              },
+              {
+                "criterion": "categories_checked lists all five categories, each marked found or not-found.",
+                "probability": 0.97,
+                "passed": true
+              },
+              {
+                "criterion": "The report shows a draft state followed by an approval decision of 'approve', and the final report records approved_by and approved_at.",
+                "probability": 0.96,
+                "passed": true
+              },
+              {
+                "criterion": "Explanations are plain English and state the practical risk.",
+                "probability": 0.96,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "risk_report.findings",
+                  "op": "exists"
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "category": "auto-renewal",
+                    "severity": "medium",
+                    "quote": "This Agreement shall automatically renew for successive one-year terms unless either party gives written notice of non-renewal at least ninety (90) days before the end of the then-current term.",
+                    "location_hint": "Section 12. Term",
+                    "explanation": "The contract renews itself for another full year each time unless a party actively sends written notice at least 90 days before the current term ends. The practical risk is missing that deadline — a party could be locked into another year (and another year's fees) simply by anviltting to send notice in time. The 90-day window is fairly long, so the risk is moderate rather than severe, and either party can opt out.",
+                    "recommendation": "Negotiate to shorten the notice window (e.g., 30 days) or require the provider to send a renewal reminder before the notice deadline, and add a right to terminate for convenience with reasonable notice instead of only annual opt-out."
+                  }
+                ]
+              },
+              {
+                "check": {
+                  "path": "risk_report.review_status",
+                  "op": "equals",
+                  "value": "final"
+                },
+                "passed": true,
+                "actual": "final"
+              },
+              {
+                "check": {
+                  "path": "risk_report.approved_by",
+                  "op": "exists"
+                },
+                "passed": true,
+                "actual": "Legal Counsel"
+              },
+              {
+                "check": {
+                  "path": "risk_report.approved_at",
+                  "op": "exists"
+                },
+                "passed": true,
+                "actual": "recorded-at-approval"
+              },
+              {
+                "check": {
+                  "path": "categories_checked",
+                  "op": "exists"
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "category": "auto-renewal",
+                    "status": "found (1 findings)"
+                  },
+                  {
+                    "category": "unlimited-liability",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "unilateral-changes",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "data-sharing",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "non-compete",
+                    "status": "not-found"
+                  }
+                ]
+              }
+            ],
+            "runId": "run_0nweaW1-bK8d",
+            "costUsd": 0.0005848979999999999,
+            "durationMs": 3165
+          },
+          {
+            "testId": "t2",
+            "name": "edge_clean_contract_no_findings",
+            "passed": true,
+            "score": 0.968,
+            "output": {
+              "risk_report": {
+                "contract_title": "Consulting Agreement - Acme Corp",
+                "review_status": "final",
+                "approved_by": "Procurement Manager",
+                "approved_at": "recorded-at-approval",
+                "findings": [],
+                "categories_checked": [
+                  {
+                    "category": "auto-renewal",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "unlimited-liability",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "unilateral-changes",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "data-sharing",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "non-compete",
+                    "status": "not-found"
+                  }
+                ],
+                "error": null,
+                "disclaimer": "This report explains contractual risk in plain English and suggests negotiation points only. It is not legal advice; consult a qualified attorney before acting."
+              },
+              "draft_report": {
+                "contract_title": "Consulting Agreement - Acme Corp",
+                "review_status": "draft",
+                "approved_by": null,
+                "approved_at": null,
+                "findings": [],
+                "categories_checked": [
+                  {
+                    "category": "auto-renewal",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "unlimited-liability",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "unilateral-changes",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "data-sharing",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "non-compete",
+                    "status": "not-found"
+                  }
+                ],
+                "error": null,
+                "disclaimer": "This report explains contractual risk in plain English and suggests negotiation points only. It is not legal advice; consult a qualified attorney before acting."
+              },
+              "approval": {
+                "requested_decision": "approve",
+                "reviewer_approved": true,
+                "reviewer_role": "Procurement Manager",
+                "reviewer_comment": "auto-approved (evaluation mode)",
+                "approved_at": "recorded-at-approval"
+              },
+              "approval_request": null,
+              "categories_checked": [
+                {
+                  "category": "auto-renewal",
+                  "status": "not-found"
+                },
+                {
+                  "category": "unlimited-liability",
+                  "status": "not-found"
+                },
+                {
+                  "category": "unilateral-changes",
+                  "status": "not-found"
+                },
+                {
+                  "category": "data-sharing",
+                  "status": "not-found"
+                },
+                {
+                  "category": "non-compete",
+                  "status": "not-found"
+                }
+              ]
+            },
+            "criteria": [
+              {
+                "criterion": "categories_checked lists all five categories, each marked found or not-found, with no risky clauses found in any category.",
+                "probability": 0.95,
+                "passed": true
+              },
+              {
+                "criterion": "The findings array is empty or contains no entries, and the report still completes the draft-then-approval workflow.",
+                "probability": 0.89,
+                "passed": true
+              },
+              {
+                "criterion": "The final report records approved_by and approved_at after the 'approve' decision.",
+                "probability": 0.96,
+                "passed": true
+              },
+              {
+                "criterion": "The report does not fabricate findings or quotes not present in the contract text.",
+                "probability": 0.94,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "risk_report.findings",
+                  "op": "type",
+                  "value": "array"
+                },
+                "passed": true,
+                "actual": []
+              },
+              {
+                "check": {
+                  "path": "risk_report.review_status",
+                  "op": "equals",
+                  "value": "final"
+                },
+                "passed": true,
+                "actual": "final"
+              },
+              {
+                "check": {
+                  "path": "risk_report.approved_by",
+                  "op": "exists"
+                },
+                "passed": true,
+                "actual": "Procurement Manager"
+              },
+              {
+                "check": {
+                  "path": "categories_checked",
+                  "op": "exists"
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "category": "auto-renewal",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "unlimited-liability",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "unilateral-changes",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "data-sharing",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "non-compete",
+                    "status": "not-found"
+                  }
+                ]
+              }
+            ],
+            "runId": "run_WgAyKk0of3a7",
+            "costUsd": 0.0005321880000000001,
+            "durationMs": 2057
+          },
+          {
+            "testId": "t3",
+            "name": "tricky_revise_feedback_with_ambiguous_adversarial_text",
+            "passed": false,
+            "score": 0.826,
+            "output": {
+              "risk_report": {
+                "contract_title": "Employment Agreement - Senior Engineer",
+                "review_status": "draft",
+                "approved_by": null,
+                "approved_at": null,
+                "findings": [
+                  {
+                    "category": "unilateral-changes",
+                    "severity": "high",
+                    "quote": "The Company may unilaterally change the Employee's role, reporting line, compensation, and work location at its sole discretion with two weeks' notice.",
+                    "location_hint": "",
+                    "explanation": "The Company can change the Employee's job duties, manager, pay, and workplace entirely at its sole discretion, with only two weeks' notice and no need for the Employee's agreement. This creates significant risk for the Employee, who could face a pay cut or forced relocation with no say in the matter.",
+                    "recommendation": "Negotiate a requirement that changes to compensation or work location require the Employee's written consent, or that refusal allows the Employee to resign with severance."
+                  },
+                  {
+                    "category": "data-sharing",
+                    "severity": "high",
+                    "quote": "Provider may share Customer Data with affiliates and third-party service providers without restriction.",
+                    "location_hint": "",
+                    "explanation": "The Provider can share the customer's data with any affiliates or outside service providers with no limits, conditions, or confidentiality requirements. This means the customer loses control over who sees its data, and the data could end up with unbound third parties who have no obligations to protect it.",
+                    "recommendation": "Negotiate to limit sharing to service providers bound by written confidentiality and data-protection obligations no less protective than this agreement, and require prior notice or customer consent for any sharing with affiliates."
+                  },
+                  {
+                    "category": "data-sharing",
+                    "severity": "low",
+                    "quote": "The Employee consents to the Company monitoring and sharing performance data with any successor employer in a sale of the Company.",
+                    "location_hint": "",
+                    "explanation": "The employee agrees that the company can monitor their performance data and hand it to a buyer if the company is sold. The scope is limited to a sale scenario (a successor employer), which narrows the exposure considerably, but the employee still has monitoring of personal performance data and no say in how the buyer uses it.",
+                    "recommendation": "Ask that the sharing be limited to data strictly necessary for the transaction, that the successor be bound to equivalent confidentiality obligations, and that the employee be notified when their data is transferred."
+                  }
+                ],
+                "categories_checked": [
+                  {
+                    "category": "auto-renewal",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "unlimited-liability",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "unilateral-changes",
+                    "status": "found (1 findings)"
+                  },
+                  {
+                    "category": "data-sharing",
+                    "status": "found (2 findings)"
+                  },
+                  {
+                    "category": "non-compete",
+                    "status": "not-found"
+                  }
+                ],
+                "error": null,
+                "disclaimer": "This report explains contractual risk in plain English and suggests negotiation points only. It is not legal advice; consult a qualified attorney before acting."
+              },
+              "draft_report": {
+                "contract_title": "Employment Agreement - Senior Engineer",
+                "review_status": "draft",
+                "approved_by": null,
+                "approved_at": null,
+                "findings": [
+                  {
+                    "category": "unilateral-changes",
+                    "severity": "medium",
+                    "quote": "The Company may unilaterally change the Employee's role, reporting line, compensation, and work location at its sole discretion with two weeks' notice.",
+                    "location_hint": "",
+                    "explanation": "The Company can change the Employee's job duties, manager, pay, and workplace on its own, with only two weeks' notice and no need for the Employee's agreement. This creates risk for the Employee, who could face a pay cut or forced relocation with no say.",
+                    "recommendation": "Negotiate a requirement that changes to compensation or work location require the Employee's written consent, or that refusal allows the Employee to resign with severance."
+                  },
+                  {
+                    "category": "data-sharing",
+                    "severity": "high",
+                    "quote": "Provider may share Customer Data with affiliates and third-party service providers without restriction.",
+                    "location_hint": "",
+                    "explanation": "The Provider can share the customer's data with any affiliates or outside service providers with no limits, conditions, or confidentiality requirements. This means the customer loses control over who sees its data, and the data could end up with unbound third parties who have no obligations to protect it.",
+                    "recommendation": "Negotiate to limit sharing to service providers bound by written confidentiality and data-protection obligations no less protective than this agreement, and require prior notice or customer consent for any sharing with affiliates."
+                  },
+                  {
+                    "category": "data-sharing",
+                    "severity": "low",
+                    "quote": "The Employee consents to the Company monitoring and sharing performance data with any successor employer in a sale of the Company.",
+                    "location_hint": "",
+                    "explanation": "The employee agrees that the company can monitor their performance data and hand it to a buyer if the company is sold. The scope is limited to a sale scenario (a successor employer), which narrows the exposure, but the employee still has monitoring of personal performance data and no say in how the buyer uses it.",
+                    "recommendation": "Ask that the sharing be limited to data strictly necessary for the transaction, that the successor be bound to equivalent confidentiality obligations, and that the employee be notified when their data is transferred."
+                  }
+                ],
+                "categories_checked": [
+                  {
+                    "category": "auto-renewal",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "unlimited-liability",
+                    "status": "not-found"
+                  },
+                  {
+                    "category": "unilateral-changes",
+                    "status": "found (1 findings)"
+                  },
+                  {
+                    "category": "data-sharing",
+                    "status": "found (2 findings)"
+                  },
+                  {
+                    "category": "non-compete",
+                    "status": "not-found"
+                  }
+                ],
+                "error": null,
+                "disclaimer": "This report explains contractual risk in plain English and suggests negotiation points only. It is not legal advice; consult a qualified attorney before acting."
+              },
+              "approval": {
+                "requested_decision": "revise",
+                "reviewer_approved": null,
+                "reviewer_role": "HR Director",
+                "reviewer_comment": null,
+                "approved_at": "recorded-at-approval"
+              },
+              "approval_request": {
+                "summary": "Revised draft incorporating reviewer feedback. Findings: 3.",
+                "reviewer_role": "HR Director",
+                "instructions": "The draft was revised per your feedback. Respond with 'approve' to mark it final, or 'revise' with further feedback. The report cannot be finalized without explicit approval."
+              },
+              "categories_checked": [
+                {
+                  "category": "auto-renewal",
+                  "status": "not-found"
+                },
+                {
+                  "category": "unlimited-liability",
+                  "status": "not-found"
+                },
+                {
+                  "category": "unilateral-changes",
+                  "status": "found (1 findings)"
+                },
+                {
+                  "category": "data-sharing",
+                  "status": "found (2 findings)"
+                },
+                {
+                  "category": "non-compete",
+                  "status": "not-found"
+                }
+              ]
+            },
+            "criteria": [
+              {
+                "criterion": "The output reflects the revision feedback: the successor-employer data-sharing finding has lowered severity and notes the scope limit, while the unilateral-change finding remains high severity.",
+                "probability": 0.33,
+                "passed": false
+              },
+              {
+                "criterion": "Every finding's quote is verbatim (allowing whitespace normalization) from the input contract_text, including the adversarial 'notwithstanding' clause if quoted.",
+                "probability": 0.67,
+                "passed": true
+              },
+              {
+                "criterion": "The workflow shows a draft, a 'revise' approval decision with feedback, a revised draft, and never a 'final' status since no 'approve' decision was given.",
+                "probability": 0.81,
+                "passed": true
+              },
+              {
+                "criterion": "categories_checked lists all five categories, each marked found or not-found.",
+                "probability": 0.97,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "risk_report.review_status",
+                  "op": "equals",
+                  "value": "draft"
+                },
+                "passed": true,
+                "actual": "draft"
+              },
+              {
+                "check": {
+                  "path": "risk_report.findings",
+                  "op": "exists"
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "category": "unilateral-changes",
+                    "severity": "high",
+                    "quote": "The Company may unilaterally change the Employee's role, reporting line, compensation, and work location at its sole discretion with two weeks' notice.",
+                    "location_hint": "",
+                    "explanation": "The Company can change the Employee's job duties, manager, pay, and workplace entirely at its sole discretion, with only two weeks' notice and no need for the Employee's agreement. This creates significant risk for the Employee, who could face a pay cut or forced relocation with no say in the matter.",
+                    "recommendation": "Negotiate a requirement that changes to compensation or work location require the Employee's written consent, or that refusal allows the Employee to resign with severance."
+                  },
+                  {
+                    "category": "data-sharing",
+                    "severity": "high",
+                    "quote": "Provider may share Customer Data with affiliates and third-party service providers without restriction.",
+                    "location_hint": "",
+                    "explanation": "The Provider can share the customer's data with any affiliates or outside service providers with no limits, conditions, or confidentiality requirements. This means the customer loses control over who sees its data, and the data could end up with unbound third parties who have no obligations to protect it.",
+                    "recommendation": "Negotiate to limit sharing to service providers bound by written confidentiality and data-protection obligations no less protective than this agreement, and require prior notice or customer consent for any sharing with affiliates."
+                  },
+                  {
+                    "category": "data-sharing",
+                    "severity": "low",
+                    "quote": "The Employee consents to the Company monitoring and sharing performance data with any successor employer in a sale of the Company.",
+                    "location_hint": "",
+                    "explanation": "The employee agrees that the company can monitor their performance data and hand it to a buyer if the company is sold. The scope is limited to a sale scenario (a successor employer), which narrows the exposure considerably, but the employee still has monitoring of personal performance data and no say in how the buyer uses it.",
+                    "recommendation": "Ask that the sharing be limited to data strictly necessary for the transaction, that the successor be bound to equivalent confidentiality obligations, and that the employee be notified when their data is transferred."
+                  }
+                ]
+              },
+              {
+                "check": {
+                  "path": "risk_report.findings",
+                  "op": "minLength",
+                  "value": 1
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "category": "unilateral-changes",
+                    "severity": "high",
+                    "quote": "The Company may unilaterally change the Employee's role, reporting line, compensation, and work location at its sole discretion with two weeks' notice.",
+                    "location_hint": "",
+                    "explanation": "The Company can change the Employee's job duties, manager, pay, and workplace entirely at its sole discretion, with only two weeks' notice and no need for the Employee's agreement. This creates significant risk for the Employee, who could face a pay cut or forced relocation with no say in the matter.",
+                    "recommendation": "Negotiate a requirement that changes to compensation or work location require the Employee's written consent, or that refusal allows the Employee to resign with severance."
+                  },
+                  {
+                    "category": "data-sharing",
+                    "severity": "high",
+                    "quote": "Provider may share Customer Data with affiliates and third-party service providers without restriction.",
+                    "location_hint": "",
+                    "explanation": "The Provider can share the customer's data with any affiliates or outside service providers with no limits, conditions, or confidentiality requirements. This means the customer loses control over who sees its data, and the data could end up with unbound third parties who have no obligations to protect it.",
+                    "recommendation": "Negotiate to limit sharing to service providers bound by written confidentiality and data-protection obligations no less protective than this agreement, and require prior notice or customer consent for any sharing with affiliates."
+                  },
+                  {
+                    "category": "data-sharing",
+                    "severity": "low",
+                    "quote": "The Employee consents to the Company monitoring and sharing performance data with any successor employer in a sale of the Company.",
+                    "location_hint": "",
+                    "explanation": "The employee agrees that the company can monitor their performance data and hand it to a buyer if the company is sold. The scope is limited to a sale scenario (a successor employer), which narrows the exposure considerably, but the employee still has monitoring of personal performance data and no say in how the buyer uses it.",
+                    "recommendation": "Ask that the sharing be limited to data strictly necessary for the transaction, that the successor be bound to equivalent confidentiality obligations, and that the employee be notified when their data is transferred."
+                  }
+                ]
+              }
+            ],
+            "runId": "run_qB7K6TbZ8OCf",
+            "costUsd": 0.00104674,
+            "durationMs": 11759
+          }
+        ],
+        "costUsd": 0.0021638259999999998,
+        "at": 1790532173820
+      },
+      "buildRunId": "run_M_YTb9-kyt6J"
+    }
+  ]
+}

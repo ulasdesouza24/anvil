@@ -1,0 +1,345 @@
+{
+  "type": "x_open_meteo_forecast",
+  "title": "Open-Meteo 3-Day Forecast",
+  "category": "data",
+  "description": "Fetches a 3-day daily weather forecast from Open-Meteo's keyless forecast API for a given latitude/longitude. Returns per-day date, max/min temperature, precipitation probability, and max wind speed, in metric or imperial units.",
+  "whenToUse": "Use when you already have coordinates (e.g. from x_open_meteo_geocode) and need the next few days of daily weather data — temperatures, rain chance, and wind — to write an outlook or make weather-dependent decisions.",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "latitude": {
+        "type": "number",
+        "description": "Latitude of the location, -90 to 90"
+      },
+      "longitude": {
+        "type": "number",
+        "description": "Longitude of the location, -180 to 180"
+      },
+      "units": {
+        "type": "string",
+        "enum": [
+          "metric",
+          "imperial"
+        ],
+        "description": "metric = °C and km/h; imperial = °F and mph"
+      }
+    },
+    "required": [
+      "latitude",
+      "longitude"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "days": {
+        "type": "array",
+        "description": "Exactly 3 daily forecast entries, in chronological order",
+        "items": {
+          "type": "object",
+          "properties": {
+            "date": {
+              "type": "string",
+              "description": "ISO date, e.g. 2024-06-01"
+            },
+            "temp_max": {
+              "type": "number",
+              "description": "Daily maximum temperature (°C or °F)"
+            },
+            "temp_min": {
+              "type": "number",
+              "description": "Daily minimum temperature (°C or °F)"
+            },
+            "precip_probability": {
+              "type": "number",
+              "description": "Max precipitation probability for the day, 0-100 (%)"
+            },
+            "wind_speed_max": {
+              "type": "number",
+              "description": "Max 10m wind speed (km/h or mph)"
+            }
+          }
+        }
+      },
+      "units": {
+        "type": "string",
+        "description": "Resolved unit system: metric or imperial"
+      }
+    }
+  },
+  "example": {
+    "latitude": 51.5072,
+    "longitude": -0.1276,
+    "units": "metric"
+  },
+  "sideEffects": false,
+  "secrets": [],
+  "impl": {
+    "kind": "http",
+    "request": {
+      "method": "GET",
+      "url": "https://api.open-meteo.com/v1/forecast",
+      "query": {
+        "latitude": "{{config.latitude}}",
+        "longitude": "{{config.longitude}}",
+        "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max",
+        "forecast_days": "3",
+        "timezone": "auto",
+        "temperature_unit": "fahrenheit",
+        "wind_speed_unit": "mph"
+      }
+    },
+    "transform": "const imperial = config.units === 'imperial'; const c2f = c => c * 9 / 5 + 32; const kmh2mph = v => v * 0.621371; const d = response.daily; const days = (d.time || []).map((date, i) => { let tmax = d.temperature_2m_max[i], tmin = d.temperature_2m_min[i], wind = d.wind_speed_10m_max[i]; if (!imperial) { tmax = (tmax - 32) * 5 / 9; tmin = (tmin - 32) * 5 / 9; wind = wind / 0.621371; } return { date, temp_max: tmax, temp_min: tmin, precip_probability: d.precipitation_probability_max[i], wind_speed_max: wind }; }); return { days, units: imperial ? 'imperial' : 'metric' };",
+    "timeoutMs": 20000
+  },
+  "tests": [
+    {
+      "name": "returns three daily entries for London",
+      "config": {
+        "latitude": 51.5072,
+        "longitude": -0.1276,
+        "units": "metric"
+      },
+      "checks": [
+        {
+          "path": "days",
+          "op": "type",
+          "value": "array"
+        },
+        {
+          "path": "days",
+          "op": "minLength",
+          "value": 3
+        },
+        {
+          "path": "days[0].date",
+          "op": "matches",
+          "value": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        {
+          "path": "days[0].temp_max",
+          "op": "type",
+          "value": "number"
+        },
+        {
+          "path": "days[0].precip_probability",
+          "op": "minLength",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "name": "imperial units resolve correctly",
+      "config": {
+        "latitude": 40.7128,
+        "longitude": -74.006,
+        "units": "imperial"
+      },
+      "checks": [
+        {
+          "path": "units",
+          "op": "equals",
+          "value": "imperial"
+        },
+        {
+          "path": "days[0].temp_max",
+          "op": "type",
+          "value": "number"
+        },
+        {
+          "path": "days[0].wind_speed_max",
+          "op": "type",
+          "value": "number"
+        }
+      ]
+    }
+  ],
+  "version": 1,
+  "createdBy": "anvil",
+  "createdAt": 1790547716073,
+  "approved": true,
+  "status": "passed",
+  "testReport": [
+    {
+      "name": "returns three daily entries for London",
+      "passed": true,
+      "output": {
+        "days": [
+          {
+            "date": "2026-09-27",
+            "temp_max": 21.666666666666668,
+            "temp_min": 14.222222222222221,
+            "precip_probability": 12,
+            "wind_speed_max": 18.346527275975223
+          },
+          {
+            "date": "2026-09-28",
+            "temp_max": 19.944444444444446,
+            "temp_min": 14.11111111111111,
+            "precip_probability": 31,
+            "wind_speed_max": 15.771576079347122
+          },
+          {
+            "date": "2026-09-29",
+            "temp_max": 25.888888888888886,
+            "temp_min": 16.166666666666668,
+            "precip_probability": 33,
+            "wind_speed_max": 16.254379428714888
+          }
+        ],
+        "units": "metric"
+      },
+      "checks": [
+        {
+          "check": {
+            "path": "days",
+            "op": "type",
+            "value": "array"
+          },
+          "passed": true,
+          "actual": [
+            {
+              "date": "2026-09-27",
+              "temp_max": 21.666666666666668,
+              "temp_min": 14.222222222222221,
+              "precip_probability": 12,
+              "wind_speed_max": 18.346527275975223
+            },
+            {
+              "date": "2026-09-28",
+              "temp_max": 19.944444444444446,
+              "temp_min": 14.11111111111111,
+              "precip_probability": 31,
+              "wind_speed_max": 15.771576079347122
+            },
+            {
+              "date": "2026-09-29",
+              "temp_max": 25.888888888888886,
+              "temp_min": 16.166666666666668,
+              "precip_probability": 33,
+              "wind_speed_max": 16.254379428714888
+            }
+          ]
+        },
+        {
+          "check": {
+            "path": "days",
+            "op": "minLength",
+            "value": 3
+          },
+          "passed": true,
+          "actual": [
+            {
+              "date": "2026-09-27",
+              "temp_max": 21.666666666666668,
+              "temp_min": 14.222222222222221,
+              "precip_probability": 12,
+              "wind_speed_max": 18.346527275975223
+            },
+            {
+              "date": "2026-09-28",
+              "temp_max": 19.944444444444446,
+              "temp_min": 14.11111111111111,
+              "precip_probability": 31,
+              "wind_speed_max": 15.771576079347122
+            },
+            {
+              "date": "2026-09-29",
+              "temp_max": 25.888888888888886,
+              "temp_min": 16.166666666666668,
+              "precip_probability": 33,
+              "wind_speed_max": 16.254379428714888
+            }
+          ]
+        },
+        {
+          "check": {
+            "path": "days[0].date",
+            "op": "matches",
+            "value": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "passed": true,
+          "actual": "2026-09-27"
+        },
+        {
+          "check": {
+            "path": "days[0].temp_max",
+            "op": "type",
+            "value": "number"
+          },
+          "passed": true,
+          "actual": 21.666666666666668
+        },
+        {
+          "check": {
+            "path": "days[0].precip_probability",
+            "op": "minLength",
+            "value": 0
+          },
+          "passed": true,
+          "actual": 12
+        }
+      ]
+    },
+    {
+      "name": "imperial units resolve correctly",
+      "passed": true,
+      "output": {
+        "days": [
+          {
+            "date": "2026-09-27",
+            "temp_max": 63.4,
+            "temp_min": 57.3,
+            "precip_probability": 100,
+            "wind_speed_max": 21.2
+          },
+          {
+            "date": "2026-09-28",
+            "temp_max": 61,
+            "temp_min": 57.3,
+            "precip_probability": 82,
+            "wind_speed_max": 12.3
+          },
+          {
+            "date": "2026-09-29",
+            "temp_max": 70,
+            "temp_min": 56.3,
+            "precip_probability": 3,
+            "wind_speed_max": 8.1
+          }
+        ],
+        "units": "imperial"
+      },
+      "checks": [
+        {
+          "check": {
+            "path": "units",
+            "op": "equals",
+            "value": "imperial"
+          },
+          "passed": true,
+          "actual": "imperial"
+        },
+        {
+          "check": {
+            "path": "days[0].temp_max",
+            "op": "type",
+            "value": "number"
+          },
+          "passed": true,
+          "actual": 63.4
+        },
+        {
+          "check": {
+            "path": "days[0].wind_speed_max",
+            "op": "type",
+            "value": "number"
+          },
+          "passed": true,
+          "actual": 21.2
+        }
+      ]
+    }
+  ],
+  "history": []
+}

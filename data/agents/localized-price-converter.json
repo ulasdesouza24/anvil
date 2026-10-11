@@ -1,0 +1,957 @@
+{
+  "id": "localized-price-converter",
+  "name": "Localized Price Converter",
+  "description": "Converts a USD price into multiple target currencies using live exchange rates and produces a localized price table with psychological rounding per currency.",
+  "createdAt": 1790547755294,
+  "updatedAt": 1790547755294,
+  "currentVersion": 1,
+  "versions": [
+    {
+      "version": 1,
+      "spec": {
+        "specVersion": "anvil/v1",
+        "id": "localized-price-converter",
+        "name": "Localized Price Converter",
+        "description": "Converts a USD price into multiple target currencies using live exchange rates and produces a localized price table with psychological rounding per currency.",
+        "version": 1,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "price_usd": {
+              "type": "number",
+              "description": "The base price in USD to convert."
+            },
+            "target_currencies": {
+              "type": "array",
+              "description": "List of ISO 4217 currency codes to convert the price into.",
+              "items": {
+                "type": "string"
+              }
+            },
+            "rounding_style": {
+              "type": "string",
+              "description": "Psychological rounding strategy: 'charm', 'prestige', or 'auto'. Defaults to 'auto'.",
+              "enum": [
+                "charm",
+                "prestige",
+                "auto"
+              ],
+              "default": "auto"
+            }
+          },
+          "required": [
+            "price_usd",
+            "target_currencies"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "price_table": {
+              "type": "array",
+              "description": "One row per unique valid target currency: currency_code, exchange_rate_used, rate_timestamp, raw_converted_price, rounded_price, rounding_note."
+            },
+            "summary": {
+              "type": "string",
+              "description": "Brief summary of base price, currency count, rate source and timestamp."
+            }
+          }
+        },
+        "nodes": [
+          {
+            "id": "input",
+            "type": "input",
+            "name": "Input",
+            "config": {}
+          },
+          {
+            "id": "validate_inputs",
+            "type": "code",
+            "name": "Validate & normalize inputs",
+            "description": "Validate price, uppercase/dedupe currency codes, default rounding style, and flag zero-decimal currencies.",
+            "config": {
+              "timeoutMs": 2000,
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "price_usd": {
+                    "type": "number"
+                  },
+                  "currencies": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "rounding_style": {
+                    "type": "string"
+                  },
+                  "invalid_codes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "zero_decimal": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "price_usd",
+                  "currencies",
+                  "rounding_style",
+                  "invalid_codes",
+                  "zero_decimal"
+                ]
+              },
+              "code": "const price = Number(input.price_usd);\nif (!isFinite(price) || price <= 0) {\n  throw new Error('price_usd must be a positive number');\n}\nconst ZERO_DECIMAL = new Set(['JPY','KRW','VND','ISK','CLP','PYG','UGX','COP','HUF','TWD','BHD','IQD','JOD','KWD','LYD','OMR','TND','RSD','MGA','RWF','XAF','XOF','XPF','BIF','CLF','DJF','GNF','KMF','MRO','VUV','WST','SLL','INR']);\nconst raw = Array.isArray(input.target_currencies) ? input.target_currencies : [];\nconst seen = new Set();\nconst currencies = [];\nconst invalid_codes = [];\nfor (const c of raw) {\n  if (typeof c !== 'string') { invalid_codes.push(String(c)); continue; }\n  const code = c.trim().toUpperCase();\n  if (!/^[A-Z]{3}$/.test(code)) { invalid_codes.push(code); continue; }\n  if (!seen.has(code)) { seen.add(code); currencies.push(code); }\n}\nlet style = input.rounding_style;\nif (style !== 'charm' && style !== 'prestige') style = 'auto';\nconst zero_decimal = currencies.filter(c => ZERO_DECIMAL.has(c));\nreturn { price_usd: price, currencies, rounding_style: style, invalid_codes, zero_decimal };"
+            }
+          },
+          {
+            "id": "fetch_rates",
+            "type": "map",
+            "name": "Fetch live rates per currency",
+            "description": "Runs x_currency_convert per currency code in parallel to get the live USD rate and timestamp.",
+            "config": {
+              "items": "{{nodes.validate_inputs.output.currencies}}",
+              "mode": "node",
+              "nodeType": "x_currency_convert",
+              "nodeConfig": {
+                "amount": 1,
+                "from": "USD",
+                "to": "{{item}}"
+              },
+              "concurrency": 4,
+              "maxItems": 50,
+              "continueOnError": true
+            }
+          },
+          {
+            "id": "build_price_table",
+            "type": "code",
+            "name": "Convert & apply psychological rounding",
+            "description": "Converts the price per currency and applies charm/prestige rounding within the 5% tolerance, building the price table.",
+            "config": {
+              "timeoutMs": 2000,
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "price_table": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "currency_code": {
+                          "type": "string"
+                        },
+                        "exchange_rate_used": {
+                          "type": "number"
+                        },
+                        "rate_timestamp": {
+                          "type": "string"
+                        },
+                        "raw_converted_price": {
+                          "type": "number"
+                        },
+                        "rounded_price": {
+                          "type": "number"
+                        },
+                        "rounding_note": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "currency_code",
+                        "exchange_rate_used",
+                        "rate_timestamp",
+                        "raw_converted_price",
+                        "rounded_price",
+                        "rounding_note"
+                      ]
+                    }
+                  },
+                  "skipped": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "currency_code": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "first_rate_timestamp": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "price_table",
+                  "skipped",
+                  "first_rate_timestamp"
+                ]
+              },
+              "code": "const price = nodes.validate_inputs.output.price_usd;\nconst style = nodes.validate_inputs.output.rounding_style;\nconst zeroDecimal = new Set(nodes.validate_inputs.output.zero_decimal || []);\nconst results = nodes.fetch_rates.output.results || [];\nconst items = nodes.validate_inputs.output.currencies || [];\nconst price_table = [];\nconst skipped = [];\nlet first_rate_timestamp = '';\nfor (let i = 0; i < items.length; i++) {\n  const code = items[i];\n  const r = results[i];\n  const rate = r && typeof r.rate === 'number' ? r.rate : null;\n  if (!rate || rate <= 0) {\n    skipped.push({ currency_code: code, reason: 'live rate unavailable' });\n    continue;\n  }\n  const raw = price * rate;\n  const isZero = zeroDecimal.has(code);\n  let rounded, note;\n  const cap = raw * 1.05;\n  if (style === 'prestige') {\n    if (isZero) {\n      let cand = Math.ceil(raw);\n      if (cand > cap) cand = Math.round(raw);\n      rounded = cand;\n      note = 'Prestige rounding: rounded up to a clean whole-number price within 5% tolerance.';\n    } else {\n      const endings = [0.00, 0.95, 0.50];\n      let chosen = null;\n      for (const base of [Math.ceil(raw), Math.ceil(raw) - 1]) {\n        for (const e of endings) {\n          const cand = Math.round((base + e) * 100) / 100;\n          if (cand >= raw && cand <= cap) { chosen = cand; break; }\n        }\n        if (chosen !== null) break;\n      }\n      if (chosen === null) {\n        chosen = Math.round(raw * 100) / 100;\n        note = 'No clean prestige ending fit within 5% tolerance; rounded to nearest conventional price.';\n      } else {\n        note = 'Prestige rounding: clean .' + String(Math.round((chosen % 1) * 100)).padStart(2, '0') + ' ending within 5% tolerance.';\n      }\n      rounded = chosen;\n    }\n  } else {\n    if (isZero) {\n      const endings = [9, 8, 0];\n      let chosen = null;\n      for (const e of endings) {\n        const cand = Math.floor(raw / 10) * 10 + e;\n        if (cand <= cap && cand > 0) { chosen = cand; break; }\n      }\n      if (chosen === null) chosen = Math.round(raw);\n      rounded = chosen;\n      note = 'Zero-decimal currency: whole-number charm ending (' + (chosen % 10) + ') within 5% tolerance.';\n    } else {\n      const endings = [0.99, 0.95, 0.49, 0.00];\n      let chosen = null;\n      for (const e of endings) {\n        const cand = Math.floor(raw) + e;\n        if (cand <= cap && cand > 0) { chosen = cand; break; }\n      }\n      if (chosen === null) {\n        chosen = Math.round(raw * 100) / 100;\n        note = 'No charm ending fit within 5% tolerance; rounded to nearest conventional price.';\n      } else {\n        note = 'Charm ending .' + String(Math.round((chosen % 1) * 100)).padStart(2, '0') + ' chosen within 5% tolerance.';\n      }\n      rounded = Math.round(chosen * 100) / 100;\n    }\n  }\n  const ts = (r && (r.date || r.timestamp)) || '';\n  if (!first_rate_timestamp && ts) first_rate_timestamp = ts;\n  price_table.push({\n    currency_code: code,\n    exchange_rate_used: rate,\n    rate_timestamp: ts,\n    raw_converted_price: Math.round(raw * 100) / 100,\n    rounded_price: rounded,\n    rounding_note: note\n  });\n}\nreturn { price_table, skipped, first_rate_timestamp };"
+            }
+          },
+          {
+            "id": "compose_summary",
+            "type": "transform",
+            "name": "Compose summary",
+            "description": "Builds a one-sentence summary with base price, currency count, rate source, timestamp, and skipped codes.",
+            "config": {
+              "value": {
+                "summary": "Converted USD ${{nodes.validate_inputs.output.price_usd}} into {{nodes.build_price_table.output.price_table | length}} currencies using live ECB rates (via frankfurter.app) fetched at {{nodes.build_price_table.output.first_rate_timestamp ?? 'the latest available time'}}. Skipped codes: {{nodes.build_price_table.output.skipped | json}}."
+              },
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "summary": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "summary"
+                ]
+              }
+            }
+          },
+          {
+            "id": "output",
+            "type": "output",
+            "name": "Output",
+            "config": {
+              "value": {
+                "price_table": "{{nodes.build_price_table.output.price_table}}",
+                "summary": "{{nodes.compose_summary.output.summary}}"
+              }
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "input",
+            "to": "validate_inputs"
+          },
+          {
+            "from": "validate_inputs",
+            "to": "fetch_rates"
+          },
+          {
+            "from": "fetch_rates",
+            "to": "build_price_table"
+          },
+          {
+            "from": "validate_inputs",
+            "to": "build_price_table"
+          },
+          {
+            "from": "build_price_table",
+            "to": "compose_summary"
+          },
+          {
+            "from": "compose_summary",
+            "to": "output"
+          }
+        ],
+        "policy": {
+          "maxCostUsd": 0.5,
+          "maxNodeExecutions": 500,
+          "timeoutMs": 600000,
+          "requireApprovalForSideEffects": false
+        },
+        "tests": [
+          {
+            "id": "t1",
+            "name": "typical_multi_currency_charm",
+            "input": {
+              "price_usd": 29.99,
+              "target_currencies": [
+                "EUR",
+                "GBP",
+                "JPY"
+              ],
+              "rounding_style": "charm"
+            },
+            "criteria": [
+              "The output contains exactly one table row per unique valid target currency code (EUR, GBP, JPY = 3 rows).",
+              "Each row's raw_converted_price equals 29.99 * exchange_rate_used within 0.01.",
+              "Each row includes an exchange_rate_used and a rate_timestamp.",
+              "The summary states the base USD price (29.99), the number of currencies converted (3), and the rate timestamp."
+            ],
+            "checks": [
+              {
+                "path": "price_table",
+                "op": "type",
+                "value": "array"
+              },
+              {
+                "path": "price_table",
+                "op": "maxLength",
+                "value": 3
+              },
+              {
+                "path": "summary",
+                "op": "contains",
+                "value": "29.99"
+              }
+            ]
+          },
+          {
+            "id": "t2",
+            "name": "edge_duplicate_and_zero_decimal",
+            "input": {
+              "price_usd": 149,
+              "target_currencies": [
+                "INR",
+                "CAD",
+                "AUD",
+                "BRL",
+                "INR"
+              ],
+              "rounding_style": "charm"
+            },
+            "criteria": [
+              "Duplicate currency codes are deduplicated: exactly 4 rows (INR, CAD, AUD, BRL), not 5.",
+              "Each row's raw_converted_price equals 149 * exchange_rate_used within 0.01.",
+              "Each row's rounded_price ends in a charm-style ending consistent with the currency's decimal convention (e.g. .99 for 2-decimal currencies, whole-number 9-ending for zero-decimal currencies like INR where appropriate).",
+              "For every row, rounded_price <= raw_converted_price * 1.05."
+            ],
+            "checks": [
+              {
+                "path": "price_table",
+                "op": "maxLength",
+                "value": 4
+              },
+              {
+                "path": "price_table[0].exchange_rate_used",
+                "op": "exists"
+              },
+              {
+                "path": "price_table[0].rate_timestamp",
+                "op": "exists"
+              }
+            ]
+          },
+          {
+            "id": "t3",
+            "name": "tricky_invalid_code_and_prestige",
+            "input": {
+              "price_usd": 9.5,
+              "target_currencies": [
+                "CHF",
+                "SEK",
+                "XXY"
+              ],
+              "rounding_style": "prestige"
+            },
+            "criteria": [
+              "The invalid currency code XXY is excluded: exactly 2 rows (CHF, SEK), one per unique valid code.",
+              "Each row's raw_converted_price equals 9.5 * exchange_rate_used within 0.01.",
+              "Each row's rounded_price ends in a prestige-style ending consistent with the currency's decimal convention.",
+              "The summary states the base USD price (9.5), the number of currencies converted (2), and the rate timestamp."
+            ],
+            "checks": [
+              {
+                "path": "price_table",
+                "op": "maxLength",
+                "value": 2
+              },
+              {
+                "path": "summary",
+                "op": "contains",
+                "value": "9.5"
+              },
+              {
+                "path": "summary",
+                "op": "matches",
+                "value": "\\d{4}-\\d{2}-\\d{2}"
+              }
+            ]
+          }
+        ],
+        "meta": {
+          "builtBy": "anvil-builder",
+          "request": "Given a price in USD and a list of target currency codes, convert the price into each currency with live rates and produce a localized price table with psychological rounding (e.g. 9.99-style endings) per currency.",
+          "taskSpec": {
+            "name": "Localized Price Converter",
+            "agentId": "localized-price-converter",
+            "summary": "Converts a USD price into multiple target currencies using live exchange rates and produces a localized price table with psychological rounding per currency.",
+            "goal": "Given a USD price and a list of target currency codes, fetch live exchange rates, convert the price into each currency, apply currency-appropriate psychological rounding (e.g. 9.99-style endings), and output a localized price table.",
+            "inputs": [
+              {
+                "name": "price_usd",
+                "type": "number",
+                "description": "The base price in USD to convert.",
+                "required": true,
+                "example": 49.5
+              },
+              {
+                "name": "target_currencies",
+                "type": "array",
+                "description": "List of ISO 4217 currency codes to convert the price into.",
+                "required": true,
+                "example": [
+                  "EUR",
+                  "GBP",
+                  "JPY",
+                  "INR"
+                ]
+              },
+              {
+                "name": "rounding_style",
+                "type": "string",
+                "description": "Psychological rounding strategy: 'charm' (x.99/x.95 endings), 'prestige' (round to nearest whole), or 'auto' (choose per-currency convention). Defaults to 'auto'.",
+                "required": false,
+                "example": "auto"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "price_table",
+                "type": "array",
+                "description": "Array of objects, one per target currency, each containing: currency_code, exchange_rate_used, rate_timestamp, raw_converted_price, rounded_price, rounding_note."
+              },
+              {
+                "name": "summary",
+                "type": "string",
+                "description": "Brief text summarizing the conversion: base price, number of currencies, rate source and timestamp."
+              }
+            ],
+            "steps": [
+              "Validate inputs: price_usd must be a positive number; each target currency code must be a valid ISO 4217 code; deduplicate the currency list.",
+              "Fetch live exchange rates for USD to each target currency from a rates API (e.g. exchangerate.host, Open Exchange Rates); record the rate and timestamp for each.",
+              "Convert price_usd into each currency: raw = price_usd * rate.",
+              "For each currency, determine the psychological rounding convention: 'auto' selects charm pricing (e.g. 9.99, 9.95) for currencies with minor units like EUR/GBP/USD, whole-number charm endings (e.g. 999) for zero-decimal currencies like JPY, and respects local conventions (e.g. .95 common in EUR); 'charm' and 'prestige' apply uniformly as specified.",
+              "Apply rounding: choose the largest charm ending (e.g. .99, .95, .49, .00) that does not exceed the raw converted price by more than 5%; if no charm ending fits within tolerance, round to nearest conventional ending.",
+              "Build the price_table with currency_code, exchange_rate_used, rate_timestamp, raw_converted_price, rounded_price, and a rounding_note explaining the ending chosen.",
+              "Compose a one-sentence summary including base price, currency count, rate source, and rate retrieval timestamp."
+            ],
+            "constraints": [
+              "Use live rates retrieved at run time; never use hardcoded or memorized rates.",
+              "Every rate must include a timestamp; if a rate cannot be fetched for a currency, exclude it from the table and report it in the summary rather than failing.",
+              "Rounded price must never exceed the raw converted price by more than 5%.",
+              "Zero-decimal currencies (JPY, KRW, etc.) must have no decimal places in the rounded price.",
+              "Output only the price_table and summary; do not include intermediate reasoning.",
+              "All currency codes in output must be uppercase ISO 4217."
+            ],
+            "successCriteria": [
+              "The output contains exactly one table row per unique valid target currency code.",
+              "Each row's raw_converted_price equals price_usd * exchange_rate_used within 0.01.",
+              "Each row's rounded_price ends in a psychological ending consistent with the rounding_style and the currency's decimal convention.",
+              "For every row, rounded_price <= raw_converted_price * 1.05.",
+              "Every row includes an exchange_rate_used and rate_timestamp from the live fetch.",
+              "The summary states the base USD price, the number of currencies converted, and the rate timestamp."
+            ],
+            "assumptions": [
+              "Default rounding_style is 'auto', selecting per-currency charm conventions.",
+              "Rates are fetched from a public exchange-rate API at run time; a single fetch timestamp is used for all currencies in one run.",
+              "Charm endings considered are .99, .95, .49, and .00 for two-decimal currencies, and 9/8-endings for zero-decimal currencies.",
+              "Invalid or unsupported currency codes are skipped and reported, not treated as fatal errors.",
+              "Prices are retail-style; no tax, fees, or markup adjustments are applied."
+            ],
+            "clarifyingQuestions": [],
+            "exampleInputs": [
+              {
+                "price_usd": 29.99,
+                "target_currencies": [
+                  "EUR",
+                  "GBP",
+                  "JPY"
+                ]
+              },
+              {
+                "price_usd": 149,
+                "target_currencies": [
+                  "INR",
+                  "CAD",
+                  "AUD",
+                  "BRL"
+                ],
+                "rounding_style": "charm"
+              },
+              {
+                "price_usd": 9.5,
+                "target_currencies": [
+                  "CHF",
+                  "SEK",
+                  "MXN"
+                ],
+                "rounding_style": "prestige"
+              }
+            ]
+          },
+          "plan": {
+            "pattern": "map_reduce",
+            "rationale": "The core work is a per-currency fan-out (fetch live rate, convert, round) followed by combining rows into a table and a summary. All math (conversion, charm rounding, 5% tolerance, zero-decimal handling) is deterministic and belongs in code, not an LLM. The existing x_currency_convert class already fetches live ECB rates with rate and date, so no new classes are needed. A single map step over the deduplicated currency list gives one shared fetch timestamp per run; failed lookups are filtered out and reported in the summary instead of failing the run.",
+            "steps": [
+              {
+                "id": "validate_inputs",
+                "type": "code",
+                "purpose": "Validate price_usd is a positive number, uppercase/trim and deduplicate target_currencies, default rounding_style to 'auto', and keep a set of known zero-decimal currencies (JPY, KRW, VND, ISK, CLP, etc.) for later rounding. Returns {price_usd, currencies, rounding_style, invalid_codes}.",
+                "dependsOn": [
+                  "input"
+                ]
+              },
+              {
+                "id": "fetch_rates",
+                "type": "map",
+                "purpose": "For each unique currency code, run x_currency_convert (amount 1, from USD, to that code) in parallel to get the live rate, rate date, and success flag per currency.",
+                "dependsOn": [
+                  "validate_inputs"
+                ],
+                "model": "balanced"
+              },
+              {
+                "id": "build_price_table",
+                "type": "code",
+                "purpose": "For each successful rate result: raw = price_usd * rate. Apply rounding per rounding_style: 'prestige' rounds to nearest whole (floor for zero-decimal); 'charm'/'auto' pick the largest charm ending (.99, .95, .49, .00 for two-decimal currencies; 9/8-endings on whole numbers for zero-decimal currencies like JPY/KRW) that does not exceed raw*1.05, falling back to a conventional nearest ending. Build price_table rows {currency_code, exchange_rate_used, rate_timestamp, raw_converted_price, rounded_price, rounding_note} and collect skipped codes (invalid or failed fetch) with reasons.",
+                "dependsOn": [
+                  "fetch_rates",
+                  "validate_inputs"
+                ]
+              },
+              {
+                "id": "compose_summary",
+                "type": "transform",
+                "purpose": "Build the one-sentence summary deterministically: base USD price, number of currencies successfully converted, rate source (ECB via frankfurter.app), rate timestamp, and any skipped/unsupported currency codes reported rather than failing.",
+                "dependsOn": [
+                  "build_price_table"
+                ]
+              }
+            ],
+            "output": "price_table: array from build_price_table (one row per unique valid currency: currency_code, exchange_rate_used, rate_timestamp, raw_converted_price, rounded_price, rounding_note); summary: string from compose_summary (base price, currency count, rate source and timestamp, skipped codes if any).",
+            "newClasses": []
+          },
+          "pattern": "map_reduce",
+          "compile": [
+            {
+              "attempt": 0,
+              "strategy": "autofix",
+              "errors": 3,
+              "warnings": 0
+            },
+            {
+              "attempt": 1,
+              "strategy": "patch",
+              "errors": 1,
+              "warnings": 0
+            },
+            {
+              "attempt": 2,
+              "strategy": "patch",
+              "errors": 0,
+              "warnings": 0
+            }
+          ],
+          "evolution": [
+            {
+              "round": 0,
+              "score": 0.901,
+              "passRate": 0.333,
+              "accepted": true,
+              "change": "initial build"
+            },
+            {
+              "round": 1,
+              "score": 0.939,
+              "passRate": 1,
+              "accepted": true,
+              "change": "Added INR (and removed duplicate PYG/UGX entries) to the ZERO_DECIMAL set in validate_inputs so zero-decimal currencies get whole-number charm/prestige treatment.; Rewrote the prestige branch in build_price_table: for 2-decimal currencies it now snaps up to clean endings (.00, then .95, then .50) at or above the raw price within the 5% tolerance cap (falling back one integer below, then to nearest conventional price); for zero-decimal currencies it rounds up to a clean whole number within tolerance.; Charm logic unchanged for 2-decimal currencies; zero-decimal charm now correctly applies to INR via the fixed set."
+            }
+          ],
+          "taxonomy": {
+            "pattern": "map_reduce",
+            "domain": "currency_exchange",
+            "sourceKind": "api",
+            "outputKind": "table"
+          }
+        }
+      },
+      "createdAt": 1790547755294,
+      "note": "built by Anvil",
+      "score": 0.939,
+      "evaluation": {
+        "version": 1,
+        "passRate": 1,
+        "score": 0.939,
+        "results": [
+          {
+            "testId": "t1",
+            "name": "typical_multi_currency_charm",
+            "passed": true,
+            "score": 0.944,
+            "output": {
+              "price_table": [
+                {
+                  "currency_code": "EUR",
+                  "exchange_rate_used": 0.87696,
+                  "rate_timestamp": "2026-09-25",
+                  "raw_converted_price": 26.3,
+                  "rounded_price": 26.99,
+                  "rounding_note": "Charm ending .99 chosen within 5% tolerance."
+                },
+                {
+                  "currency_code": "GBP",
+                  "exchange_rate_used": 0.75458,
+                  "rate_timestamp": "2026-09-25",
+                  "raw_converted_price": 22.63,
+                  "rounded_price": 22.99,
+                  "rounding_note": "Charm ending .99 chosen within 5% tolerance."
+                },
+                {
+                  "currency_code": "JPY",
+                  "exchange_rate_used": 157.59,
+                  "rate_timestamp": "2026-09-25",
+                  "raw_converted_price": 4726.12,
+                  "rounded_price": 4729,
+                  "rounding_note": "Zero-decimal currency: whole-number charm ending (9) within 5% tolerance."
+                }
+              ],
+              "summary": "Converted USD $29.99 into 3 currencies using live ECB rates (via frankfurter.app) fetched at 2026-09-25. Skipped codes: []."
+            },
+            "criteria": [
+              {
+                "criterion": "The output contains exactly one table row per unique valid target currency code (EUR, GBP, JPY = 3 rows).",
+                "probability": 0.97,
+                "passed": true
+              },
+              {
+                "criterion": "Each row's raw_converted_price equals 29.99 * exchange_rate_used within 0.01.",
+                "probability": 0.76,
+                "passed": true
+              },
+              {
+                "criterion": "Each row includes an exchange_rate_used and a rate_timestamp.",
+                "probability": 0.99,
+                "passed": true
+              },
+              {
+                "criterion": "The summary states the base USD price (29.99), the number of currencies converted (3), and the rate timestamp.",
+                "probability": 0.89,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "price_table",
+                  "op": "type",
+                  "value": "array"
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "currency_code": "EUR",
+                    "exchange_rate_used": 0.87696,
+                    "rate_timestamp": "2026-09-25",
+                    "raw_converted_price": 26.3,
+                    "rounded_price": 26.99,
+                    "rounding_note": "Charm ending .99 chosen within 5% tolerance."
+                  },
+                  {
+                    "currency_code": "GBP",
+                    "exchange_rate_used": 0.75458,
+                    "rate_timestamp": "2026-09-25",
+                    "raw_converted_price": 22.63,
+                    "rounded_price": 22.99,
+                    "rounding_note": "Charm ending .99 chosen within 5% tolerance."
+                  },
+                  {
+                    "currency_code": "JPY",
+                    "exchange_rate_used": 157.59,
+                    "rate_timestamp": "2026-09-25",
+                    "raw_converted_price": 4726.12,
+                    "rounded_price": 4729,
+                    "rounding_note": "Zero-decimal currency: whole-number charm ending (9) within 5% tolerance."
+                  }
+                ]
+              },
+              {
+                "check": {
+                  "path": "price_table",
+                  "op": "maxLength",
+                  "value": 3
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "currency_code": "EUR",
+                    "exchange_rate_used": 0.87696,
+                    "rate_timestamp": "2026-09-25",
+                    "raw_converted_price": 26.3,
+                    "rounded_price": 26.99,
+                    "rounding_note": "Charm ending .99 chosen within 5% tolerance."
+                  },
+                  {
+                    "currency_code": "GBP",
+                    "exchange_rate_used": 0.75458,
+                    "rate_timestamp": "2026-09-25",
+                    "raw_converted_price": 22.63,
+                    "rounded_price": 22.99,
+                    "rounding_note": "Charm ending .99 chosen within 5% tolerance."
+                  },
+                  {
+                    "currency_code": "JPY",
+                    "exchange_rate_used": 157.59,
+                    "rate_timestamp": "2026-09-25",
+                    "raw_converted_price": 4726.12,
+                    "rounded_price": 4729,
+                    "rounding_note": "Zero-decimal currency: whole-number charm ending (9) within 5% tolerance."
+                  }
+                ]
+              },
+              {
+                "check": {
+                  "path": "summary",
+                  "op": "contains",
+                  "value": "29.99"
+                },
+                "passed": true,
+                "actual": "Converted USD $29.99 into 3 currencies using live ECB rates (via frankfurter.app) fetched at 2026-09-25. Skipped codes: []."
+              }
+            ],
+            "runId": "run_uHb18ryDAhzD",
+            "costUsd": 0,
+            "durationMs": 808
+          },
+          {
+            "testId": "t2",
+            "name": "edge_duplicate_and_zero_decimal",
+            "passed": true,
+            "score": 0.967,
+            "output": {
+              "price_table": [
+                {
+                  "currency_code": "INR",
+                  "exchange_rate_used": 95.82,
+                  "rate_timestamp": "2026-09-25",
+                  "raw_converted_price": 14277.18,
+                  "rounded_price": 14279,
+                  "rounding_note": "Zero-decimal currency: whole-number charm ending (9) within 5% tolerance."
+                },
+                {
+                  "currency_code": "CAD",
+                  "exchange_rate_used": 1.4143,
+                  "rate_timestamp": "2026-09-25",
+                  "raw_converted_price": 210.73,
+                  "rounded_price": 210.99,
+                  "rounding_note": "Charm ending .99 chosen within 5% tolerance."
+                },
+                {
+                  "currency_code": "AUD",
+                  "exchange_rate_used": 1.4224,
+                  "rate_timestamp": "2026-09-25",
+                  "raw_converted_price": 211.94,
+                  "rounded_price": 211.99,
+                  "rounding_note": "Charm ending .99 chosen within 5% tolerance."
+                },
+                {
+                  "currency_code": "BRL",
+                  "exchange_rate_used": 5.1821,
+                  "rate_timestamp": "2026-09-25",
+                  "raw_converted_price": 772.13,
+                  "rounded_price": 772.99,
+                  "rounding_note": "Charm ending .99 chosen within 5% tolerance."
+                }
+              ],
+              "summary": "Converted USD $149 into 4 currencies using live ECB rates (via frankfurter.app) fetched at 2026-09-25. Skipped codes: []."
+            },
+            "criteria": [
+              {
+                "criterion": "Duplicate currency codes are deduplicated: exactly 4 rows (INR, CAD, AUD, BRL), not 5.",
+                "probability": 0.97,
+                "passed": true
+              },
+              {
+                "criterion": "Each row's raw_converted_price equals 149 * exchange_rate_used within 0.01.",
+                "probability": 0.9,
+                "passed": true
+              },
+              {
+                "criterion": "Each row's rounded_price ends in a charm-style ending consistent with the currency's decimal convention (e.g. .99 for 2-decimal currencies, whole-number 9-ending for zero-decimal currencies like INR where appropriate).",
+                "probability": 0.93,
+                "passed": true
+              },
+              {
+                "criterion": "For every row, rounded_price <= raw_converted_price * 1.05.",
+                "probability": 0.97,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "price_table",
+                  "op": "maxLength",
+                  "value": 4
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "currency_code": "INR",
+                    "exchange_rate_used": 95.82,
+                    "rate_timestamp": "2026-09-25",
+                    "raw_converted_price": 14277.18,
+                    "rounded_price": 14279,
+                    "rounding_note": "Zero-decimal currency: whole-number charm ending (9) within 5% tolerance."
+                  },
+                  {
+                    "currency_code": "CAD",
+                    "exchange_rate_used": 1.4143,
+                    "rate_timestamp": "2026-09-25",
+                    "raw_converted_price": 210.73,
+                    "rounded_price": 210.99,
+                    "rounding_note": "Charm ending .99 chosen within 5% tolerance."
+                  },
+                  {
+                    "currency_code": "AUD",
+                    "exchange_rate_used": 1.4224,
+                    "rate_timestamp": "2026-09-25",
+                    "raw_converted_price": 211.94,
+                    "rounded_price": 211.99,
+                    "rounding_note": "Charm ending .99 chosen within 5% tolerance."
+                  },
+                  {
+                    "currency_code": "BRL",
+                    "exchange_rate_used": 5.1821,
+                    "rate_timestamp": "2026-09-25",
+                    "raw_converted_price": 772.13,
+                    "rounded_price": 772.99,
+                    "rounding_note": "Charm ending .99 chosen within 5% tolerance."
+                  }
+                ]
+              },
+              {
+                "check": {
+                  "path": "price_table[0].exchange_rate_used",
+                  "op": "exists"
+                },
+                "passed": true,
+                "actual": 95.82
+              },
+              {
+                "check": {
+                  "path": "price_table[0].rate_timestamp",
+                  "op": "exists"
+                },
+                "passed": true,
+                "actual": "2026-09-25"
+              }
+            ],
+            "runId": "run_ah5sBPn0LVWI",
+            "costUsd": 0,
+            "durationMs": 818
+          },
+          {
+            "testId": "t3",
+            "name": "tricky_invalid_code_and_prestige",
+            "passed": true,
+            "score": 0.906,
+            "output": {
+              "price_table": [
+                {
+                  "currency_code": "CHF",
+                  "exchange_rate_used": 0.82829,
+                  "rate_timestamp": "2026-09-25",
+                  "raw_converted_price": 7.87,
+                  "rounded_price": 8,
+                  "rounding_note": "Prestige rounding: clean .00 ending within 5% tolerance."
+                },
+                {
+                  "currency_code": "SEK",
+                  "exchange_rate_used": 9.9009,
+                  "rate_timestamp": "2026-09-25",
+                  "raw_converted_price": 94.06,
+                  "rounded_price": 95,
+                  "rounding_note": "Prestige rounding: clean .00 ending within 5% tolerance."
+                }
+              ],
+              "summary": "Converted USD $9.5 into 2 currencies using live ECB rates (via frankfurter.app) fetched at 2026-09-25. Skipped codes: [\n  {\n    \"currency_code\": \"XXY\",\n    \"reason\": \"live rate unavailable\"\n  }\n]."
+            },
+            "criteria": [
+              {
+                "criterion": "The invalid currency code XXY is excluded: exactly 2 rows (CHF, SEK), one per unique valid code.",
+                "probability": 0.96,
+                "passed": true
+              },
+              {
+                "criterion": "Each row's raw_converted_price equals 9.5 * exchange_rate_used within 0.01.",
+                "probability": 0.87,
+                "passed": true
+              },
+              {
+                "criterion": "Each row's rounded_price ends in a prestige-style ending consistent with the currency's decimal convention.",
+                "probability": 0.69,
+                "passed": true
+              },
+              {
+                "criterion": "The summary states the base USD price (9.5), the number of currencies converted (2), and the rate timestamp.",
+                "probability": 0.82,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "price_table",
+                  "op": "maxLength",
+                  "value": 2
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "currency_code": "CHF",
+                    "exchange_rate_used": 0.82829,
+                    "rate_timestamp": "2026-09-25",
+                    "raw_converted_price": 7.87,
+                    "rounded_price": 8,
+                    "rounding_note": "Prestige rounding: clean .00 ending within 5% tolerance."
+                  },
+                  {
+                    "currency_code": "SEK",
+                    "exchange_rate_used": 9.9009,
+                    "rate_timestamp": "2026-09-25",
+                    "raw_converted_price": 94.06,
+                    "rounded_price": 95,
+                    "rounding_note": "Prestige rounding: clean .00 ending within 5% tolerance."
+                  }
+                ]
+              },
+              {
+                "check": {
+                  "path": "summary",
+                  "op": "contains",
+                  "value": "9.5"
+                },
+                "passed": true,
+                "actual": "Converted USD $9.5 into 2 currencies using live ECB rates (via frankfurter.app) fetched at 2026-09-25. Skipped codes: [\n  {\n    \"currency_code\": \"XXY\",\n    \"reason\": \"live rate unavailable\"\n  }\n]."
+              },
+              {
+                "check": {
+                  "path": "summary",
+                  "op": "matches",
+                  "value": "\\d{4}-\\d{2}-\\d{2}"
+                },
+                "passed": true,
+                "actual": "Converted USD $9.5 into 2 currencies using live ECB rates (via frankfurter.app) fetched at 2026-09-25. Skipped codes: [\n  {\n    \"currency_code\": \"XXY\",\n    \"reason\": \"live rate unavailable\"\n  }\n]."
+              }
+            ],
+            "runId": "run_FELGa1ZdbjLU",
+            "costUsd": 0,
+            "durationMs": 919
+          }
+        ],
+        "costUsd": 0,
+        "at": 1790547755292
+      },
+      "buildRunId": "run_UowTGjYks8_7"
+    }
+  ]
+}

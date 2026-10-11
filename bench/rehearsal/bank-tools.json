@@ -1,0 +1,36 @@
+{
+  "tools": [
+    {
+      "name": "verify_customer",
+      "description": "Checks the identity of a customer: the last 4 digits of the card and the date of birth (YYYY-MM-DD). Gives verified true and the card_id, or verified false.",
+      "parameters": { "type": "object", "properties": { "last4": { "type": "string" }, "date_of_birth": { "type": "string" } }, "required": ["last4", "date_of_birth"] },
+      "sideEffects": false,
+      "adapter": "mock",
+      "mock": "const people = { '4821': { dob: '1988-04-17', card_id: 'C-4821', name: 'Lena Park' }, '9034': { dob: '1975-11-02', card_id: 'C-9034', name: 'Omar Haddad' } }; const p = people[String(args.last4)]; if (!p || p.dob !== String(args.date_of_birth)) { state.failed = (state.failed || 0) + 1; return { verified: false }; } state.verified = p.card_id; return { verified: true, card_id: p.card_id, name: p.name };"
+    },
+    {
+      "name": "list_transactions",
+      "description": "Gives the last transactions of a verified card: transaction_id, merchant, amount_usd, days_ago.",
+      "parameters": { "type": "object", "properties": { "card_id": { "type": "string" } }, "required": ["card_id"] },
+      "sideEffects": false,
+      "adapter": "mock",
+      "mock": "if (state.verified !== args.card_id) return { error: 'verify the customer first' }; return { 'C-4821': [ { transaction_id: 'T-1', merchant: 'Coffee Corner', amount_usd: 6.5, days_ago: 2 }, { transaction_id: 'T-2', merchant: 'ElectroMart', amount_usd: 349, days_ago: 12 }, { transaction_id: 'T-3', merchant: 'SkyAir', amount_usd: 512, days_ago: 75 } ], 'C-9034': [ { transaction_id: 'T-7', merchant: 'BookNook', amount_usd: 42, days_ago: 5 } ] }[args.card_id] || [];"
+    },
+    {
+      "name": "freeze_card",
+      "description": "Freezes a verified card at once. Gives ok, or an error.",
+      "parameters": { "type": "object", "properties": { "card_id": { "type": "string" } }, "required": ["card_id"] },
+      "sideEffects": true,
+      "adapter": "mock",
+      "mock": "if (state.verified !== args.card_id) return { error: 'verify the customer first' }; state.frozen = args.card_id; return { ok: true, card_id: args.card_id, status: 'frozen' };"
+    },
+    {
+      "name": "open_dispute",
+      "description": "Opens a dispute for one transaction of a verified card. Gives ok and the dispute id, or an error.",
+      "parameters": { "type": "object", "properties": { "card_id": { "type": "string" }, "transaction_id": { "type": "string" }, "reason": { "type": "string" } }, "required": ["card_id", "transaction_id", "reason"] },
+      "sideEffects": true,
+      "adapter": "mock",
+      "mock": "if (state.verified !== args.card_id) return { error: 'verify the customer first' }; state.disputes = state.disputes || []; if (state.disputes.includes(args.transaction_id)) return { error: 'a dispute for this transaction is already open' }; state.disputes.push(args.transaction_id); return { ok: true, dispute_id: 'D-' + args.transaction_id };"
+    }
+  ]
+}

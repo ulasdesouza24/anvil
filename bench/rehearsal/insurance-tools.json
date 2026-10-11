@@ -1,0 +1,61 @@
+{
+  "tools": [
+    {
+      "name": "find_policy",
+      "description": "Finds a car insurance policy by the policy number and the last name of the holder. Gives found true, the policy_id, and the holder name, or found false.",
+      "parameters": { "type": "object", "properties": { "policy_number": { "type": "string" }, "last_name": { "type": "string" } }, "required": ["policy_number", "last_name"] },
+      "sideEffects": false,
+      "adapter": "mock",
+      "mock": "const p = { 'AX-1001': { last: 'novak', id: 'AX-1001', holder: 'Eva Novak' }, 'AX-1002': { last: 'osei', id: 'AX-1002', holder: 'Kofi Osei' }, 'AX-1003': { last: 'ricci', id: 'AX-1003', holder: 'Luca Ricci' } }[String(args.policy_number).trim().toUpperCase()]; if (!p || p.last !== String(args.last_name).trim().toLowerCase()) return { found: false }; state.policy = p.id; return { found: true, policy_id: p.id, holder: p.holder };"
+    },
+    {
+      "name": "get_coverage",
+      "description": "Gives the coverage of a found policy: status (active or lapsed), collision (true or false), deductible_usd, towing (true or false), rental_car_days_max, and today.",
+      "parameters": { "type": "object", "properties": { "policy_id": { "type": "string" } }, "required": ["policy_id"] },
+      "sideEffects": false,
+      "adapter": "mock",
+      "mock": "if (state.policy !== args.policy_id) return { error: 'find the policy first' }; const c = { 'AX-1001': { status: 'active', collision: true, deductible_usd: 500, towing: true, rental_car_days_max: 10 }, 'AX-1002': { status: 'active', collision: false, deductible_usd: 1000, towing: false, rental_car_days_max: 0 }, 'AX-1003': { status: 'lapsed', collision: true, deductible_usd: 500, towing: true, rental_car_days_max: 7 } }[args.policy_id]; return { policy_id: args.policy_id, ...c, today: '2026-10-11' };"
+    },
+    {
+      "name": "open_claim",
+      "description": "Opens a claim for a found policy. Arguments: the type (collision, theft, glass, or weather), the date of the loss (YYYY-MM-DD), and a short description. Gives ok and a claim_id, or an error.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "policy_id": { "type": "string" },
+          "type": { "type": "string", "enum": ["collision", "theft", "glass", "weather"] },
+          "loss_date": { "type": "string" },
+          "description": { "type": "string" }
+        },
+        "required": ["policy_id", "type", "loss_date", "description"]
+      },
+      "sideEffects": true,
+      "adapter": "mock",
+      "mock": "if (state.policy !== args.policy_id) return { error: 'find the policy first' }; if (args.policy_id === 'AX-1003') return { error: 'the policy is lapsed' }; if (args.policy_id === 'AX-1002' && args.type === 'collision') return { error: 'the policy has no collision coverage' }; const d = Date.parse(String(args.loss_date) + 'T00:00:00Z'); const today = Date.parse('2026-10-11T00:00:00Z'); if (!(d <= today && d >= today - 30 * 86400000)) return { error: 'the loss date must be in the last 30 days' }; state.claims = (state.claims || 0) + 1; state.claim = 'CL-' + args.policy_id.slice(3) + '-' + state.claims; return { ok: true, claim_id: state.claim };"
+    },
+    {
+      "name": "request_tow",
+      "description": "Sends a tow truck to an address for an open claim. Only for a policy with towing. Gives ok and the arrival time in minutes, or an error.",
+      "parameters": { "type": "object", "properties": { "claim_id": { "type": "string" }, "address": { "type": "string" } }, "required": ["claim_id", "address"] },
+      "sideEffects": true,
+      "adapter": "mock",
+      "mock": "if (state.claim !== args.claim_id) return { error: 'open the claim first' }; if (state.policy !== 'AX-1001') return { error: 'the policy has no towing' }; state.tow = args.address; return { ok: true, arrival_minutes: 45 };"
+    },
+    {
+      "name": "book_rental_car",
+      "description": "Books a rental car for an open claim for a number of days. The days must not be more than rental_car_days_max of the policy. Gives ok and a booking_id, or an error.",
+      "parameters": { "type": "object", "properties": { "claim_id": { "type": "string" }, "days": { "type": "integer" } }, "required": ["claim_id", "days"] },
+      "sideEffects": true,
+      "adapter": "mock",
+      "mock": "if (state.claim !== args.claim_id) return { error: 'open the claim first' }; const max = { 'AX-1001': 10, 'AX-1002': 0, 'AX-1003': 7 }[state.policy] || 0; if (!(Number(args.days) >= 1 && Number(args.days) <= max)) return { error: 'the days must be between 1 and ' + max }; state.rental = Number(args.days); return { ok: true, booking_id: 'RC-' + args.claim_id.slice(3), days: Number(args.days) };"
+    },
+    {
+      "name": "transfer_to_human",
+      "description": "Transfers the call to a human claims adjuster with a short reason. Use it for an injury, a fight about who is at fault, or when the caller asks for a person. Gives ok.",
+      "parameters": { "type": "object", "properties": { "reason": { "type": "string" } }, "required": ["reason"] },
+      "sideEffects": true,
+      "adapter": "mock",
+      "mock": "state.transfer = args.reason; return { ok: true, queue_minutes: 5 };"
+    }
+  ]
+}

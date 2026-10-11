@@ -1,0 +1,423 @@
+{
+  "type": "x_open_meteo_geocode",
+  "title": "Open-Meteo City Geocoder",
+  "category": "data",
+  "description": "Geocodes a free-text city name using Open-Meteo's keyless geocoding API. Returns the best (most populous) match's resolved name, country, latitude, and longitude, or found=false with zeroed numeric fields when no match is found.",
+  "whenToUse": "Use when you need to turn a user-provided city name into latitude/longitude coordinates before calling a weather or forecast API.",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "city": {
+        "type": "string",
+        "description": "Free-text city name to geocode, e.g. 'Lisbon'"
+      },
+      "language": {
+        "type": "string",
+        "description": "Optional ISO language code for result names, defaults to 'en'"
+      }
+    },
+    "required": [
+      "city"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "found": {
+        "type": "boolean",
+        "description": "True if a matching city was found"
+      },
+      "name": {
+        "type": "string",
+        "description": "Resolved city name"
+      },
+      "country": {
+        "type": "string",
+        "description": "Country of the matched city"
+      },
+      "latitude": {
+        "type": "number",
+        "description": "Latitude of the matched city (0 when not found)"
+      },
+      "longitude": {
+        "type": "number",
+        "description": "Longitude of the matched city (0 when not found)"
+      },
+      "population": {
+        "type": "integer",
+        "description": "Population of the matched city (0 when not found)"
+      }
+    }
+  },
+  "example": {
+    "city": "Lisbon",
+    "language": "en"
+  },
+  "sideEffects": false,
+  "secrets": [],
+  "impl": {
+    "kind": "http",
+    "request": {
+      "method": "GET",
+      "url": "https://geocoding-api.open-meteo.com/v1/search",
+      "query": {
+        "name": "{{config.city}}",
+        "count": "1",
+        "language": "{{config.language}}",
+        "format": "json"
+      }
+    },
+    "transform": "const results = (response && response.results) ? response.results : [];\nif (results.length === 0) {\n  return { found: false, name: '', country: '', latitude: 0, longitude: 0, population: 0 };\n}\nconst r = results[0];\nreturn {\n  found: true,\n  name: r.name || '',\n  country: r.country || '',\n  latitude: typeof r.latitude === 'number' ? r.latitude : 0,\n  longitude: typeof r.longitude === 'number' ? r.longitude : 0,\n  population: typeof r.population === 'number' ? r.population : 0\n};",
+    "timeoutMs": 20000
+  },
+  "tests": [
+    {
+      "name": "geocodes a known major city",
+      "config": {
+        "city": "Paris"
+      },
+      "checks": [
+        {
+          "path": "found",
+          "op": "equals",
+          "value": true
+        },
+        {
+          "path": "latitude",
+          "op": "type",
+          "value": "number"
+        },
+        {
+          "path": "longitude",
+          "op": "type",
+          "value": "number"
+        },
+        {
+          "path": "country",
+          "op": "contains",
+          "value": "France"
+        }
+      ]
+    },
+    {
+      "name": "returns empty result for a nonsense city",
+      "config": {
+        "city": "zzqqxxnotarealcity12345"
+      },
+      "checks": [
+        {
+          "path": "found",
+          "op": "equals",
+          "value": false
+        },
+        {
+          "path": "latitude",
+          "op": "equals",
+          "value": 0
+        },
+        {
+          "path": "longitude",
+          "op": "equals",
+          "value": 0
+        }
+      ]
+    }
+  ],
+  "version": 2,
+  "createdBy": "anvil",
+  "createdAt": 1790547695686,
+  "approved": true,
+  "status": "passed",
+  "testReport": [
+    {
+      "name": "geocodes a known major city",
+      "passed": true,
+      "output": {
+        "found": true,
+        "name": "Paris",
+        "country": "France",
+        "latitude": 48.85341,
+        "longitude": 2.3488,
+        "population": 2138551
+      },
+      "checks": [
+        {
+          "check": {
+            "path": "found",
+            "op": "equals",
+            "value": true
+          },
+          "passed": true,
+          "actual": true
+        },
+        {
+          "check": {
+            "path": "latitude",
+            "op": "type",
+            "value": "number"
+          },
+          "passed": true,
+          "actual": 48.85341
+        },
+        {
+          "check": {
+            "path": "longitude",
+            "op": "type",
+            "value": "number"
+          },
+          "passed": true,
+          "actual": 2.3488
+        },
+        {
+          "check": {
+            "path": "country",
+            "op": "contains",
+            "value": "France"
+          },
+          "passed": true,
+          "actual": "France"
+        }
+      ]
+    },
+    {
+      "name": "returns empty result for a nonsense city",
+      "passed": true,
+      "output": {
+        "found": false,
+        "name": "",
+        "country": "",
+        "latitude": 0,
+        "longitude": 0,
+        "population": 0
+      },
+      "checks": [
+        {
+          "check": {
+            "path": "found",
+            "op": "equals",
+            "value": false
+          },
+          "passed": true,
+          "actual": false
+        },
+        {
+          "check": {
+            "path": "latitude",
+            "op": "equals",
+            "value": 0
+          },
+          "passed": true,
+          "actual": 0
+        },
+        {
+          "check": {
+            "path": "longitude",
+            "op": "equals",
+            "value": 0
+          },
+          "passed": true,
+          "actual": 0
+        }
+      ]
+    }
+  ],
+  "history": [
+    {
+      "type": "x_open_meteo_geocode",
+      "title": "Open-Meteo City Geocoder",
+      "category": "data",
+      "description": "Geocodes a free-text city name using Open-Meteo's keyless geocoding API. Returns the best (most populous) match's resolved name, country, latitude, and longitude, or empty results when no match is found.",
+      "whenToUse": "Use when you need to turn a user-provided city name into latitude/longitude coordinates before calling a weather or forecast API.",
+      "configSchema": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string",
+            "description": "Free-text city name to geocode, e.g. 'Lisbon'"
+          },
+          "language": {
+            "type": "string",
+            "description": "Optional ISO language code for result names, defaults to 'en'"
+          }
+        },
+        "required": [
+          "city"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "found": {
+            "type": "boolean",
+            "description": "True if a matching city was found"
+          },
+          "name": {
+            "type": "string",
+            "description": "Resolved city name"
+          },
+          "country": {
+            "type": "string",
+            "description": "Country of the matched city"
+          },
+          "latitude": {
+            "type": "number",
+            "description": "Latitude of the matched city"
+          },
+          "longitude": {
+            "type": "number",
+            "description": "Longitude of the matched city"
+          },
+          "population": {
+            "type": "integer",
+            "description": "Population of the matched city"
+          }
+        }
+      },
+      "example": {
+        "city": "Lisbon",
+        "language": "en"
+      },
+      "sideEffects": false,
+      "secrets": [],
+      "impl": {
+        "kind": "http",
+        "request": {
+          "method": "GET",
+          "url": "https://geocoding-api.open-meteo.com/v1/search",
+          "query": {
+            "name": "{{config.city}}",
+            "count": "1",
+            "language": "{{config.language}}",
+            "format": "json"
+          }
+        },
+        "transform": "const results = (response && response.results) ? response.results : [];\nif (results.length === 0) {\n  return { found: false, name: '', country: '', latitude: null, longitude: null, population: null };\n}\nconst r = results[0];\nreturn {\n  found: true,\n  name: r.name || '',\n  country: r.country || '',\n  latitude: r.latitude,\n  longitude: r.longitude,\n  population: typeof r.population === 'number' ? r.population : null\n};",
+        "timeoutMs": 20000
+      },
+      "tests": [
+        {
+          "name": "geocodes a known major city",
+          "config": {
+            "city": "Paris"
+          },
+          "checks": [
+            {
+              "path": "found",
+              "op": "equals",
+              "value": true
+            },
+            {
+              "path": "latitude",
+              "op": "type",
+              "value": "number"
+            },
+            {
+              "path": "longitude",
+              "op": "type",
+              "value": "number"
+            },
+            {
+              "path": "country",
+              "op": "contains",
+              "value": "France"
+            }
+          ]
+        },
+        {
+          "name": "returns empty result for a nonsense city",
+          "config": {
+            "city": "zzqqxxnotarealcity12345"
+          },
+          "checks": [
+            {
+              "path": "found",
+              "op": "equals",
+              "value": false
+            }
+          ]
+        }
+      ],
+      "version": 1,
+      "createdBy": "anvil",
+      "createdAt": 1790547695686,
+      "approved": true,
+      "status": "failed",
+      "testReport": [
+        {
+          "name": "geocodes a known major city",
+          "passed": true,
+          "output": {
+            "found": true,
+            "name": "Paris",
+            "country": "France",
+            "latitude": 48.85341,
+            "longitude": 2.3488,
+            "population": 2138551
+          },
+          "checks": [
+            {
+              "check": {
+                "path": "found",
+                "op": "equals",
+                "value": true
+              },
+              "passed": true,
+              "actual": true
+            },
+            {
+              "check": {
+                "path": "latitude",
+                "op": "type",
+                "value": "number"
+              },
+              "passed": true,
+              "actual": 48.85341
+            },
+            {
+              "check": {
+                "path": "longitude",
+                "op": "type",
+                "value": "number"
+              },
+              "passed": true,
+              "actual": 2.3488
+            },
+            {
+              "check": {
+                "path": "country",
+                "op": "contains",
+                "value": "France"
+              },
+              "passed": true,
+              "actual": "France"
+            }
+          ]
+        },
+        {
+          "name": "returns empty result for a nonsense city",
+          "passed": false,
+          "output": {
+            "found": false,
+            "name": "",
+            "country": "",
+            "latitude": null,
+            "longitude": null,
+            "population": null
+          },
+          "checks": [
+            {
+              "check": {
+                "path": "found",
+                "op": "equals",
+                "value": false
+              },
+              "passed": true,
+              "actual": false
+            }
+          ],
+          "error": "output does not match outputSchema: /latitude must be number; /longitude must be number; /population must be integer"
+        }
+      ]
+    }
+  ]
+}

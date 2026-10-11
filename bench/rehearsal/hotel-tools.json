@@ -1,0 +1,36 @@
+{
+  "tools": [
+    {
+      "name": "get_booking",
+      "description": "Gives a hotel booking: id, guest, hotel, room_type (standard, deluxe, suite), check_in (YYYY-MM-DD), nights, price_per_night_usd, status (confirmed, cancelled), hours_until_check_in.",
+      "parameters": { "type": "object", "properties": { "booking_id": { "type": "string" } }, "required": ["booking_id"] },
+      "sideEffects": false,
+      "adapter": "mock",
+      "mock": "const db = state.bookings || (state.bookings = { 'H-501': { id: 'H-501', guest: 'Nora Lind', hotel: 'Harbor View', room_type: 'standard', check_in: '2026-11-12', nights: 3, price_per_night_usd: 140, status: 'confirmed', hours_until_check_in: 200 }, 'H-502': { id: 'H-502', guest: 'Tom Reyes', hotel: 'Harbor View', room_type: 'deluxe', check_in: '2026-10-11', nights: 2, price_per_night_usd: 210, status: 'confirmed', hours_until_check_in: 30 }, 'H-503': { id: 'H-503', guest: 'Aiko Mori', hotel: 'City Loft', room_type: 'suite', check_in: '2026-12-01', nights: 4, price_per_night_usd: 390, status: 'cancelled', hours_until_check_in: 1100 } }); return db[args.booking_id] || { error: 'no booking with this id' };"
+    },
+    {
+      "name": "room_availability",
+      "description": "Gives the free rooms of a hotel for a check-in date and a number of nights: room_type, free_rooms, price_per_night_usd.",
+      "parameters": { "type": "object", "properties": { "hotel": { "type": "string" }, "check_in": { "type": "string" }, "nights": { "type": "integer" } }, "required": ["hotel", "check_in", "nights"] },
+      "sideEffects": false,
+      "adapter": "mock",
+      "mock": "const rooms = { 'harbor view': [['standard', 4, 140], ['deluxe', 1, 210], ['suite', 0, 380]], 'city loft': [['standard', 2, 160], ['deluxe', 0, 230], ['suite', 1, 390]] }[String(args.hotel).toLowerCase()]; if (!rooms) return { error: 'no hotel with this name' }; return rooms.map(r => ({ room_type: r[0], free_rooms: r[1], price_per_night_usd: r[2] }));"
+    },
+    {
+      "name": "change_room",
+      "description": "Changes the room type of a booking. Gives ok and the new price for each night, or an error.",
+      "parameters": { "type": "object", "properties": { "booking_id": { "type": "string" }, "room_type": { "type": "string" } }, "required": ["booking_id", "room_type"] },
+      "sideEffects": true,
+      "adapter": "mock",
+      "mock": "const b = (state.bookings || {})[args.booking_id]; if (!b) return { error: 'no booking with this id (get it first)' }; if (b.status !== 'confirmed') return { error: 'the booking is cancelled' }; const free = { 'Harbor View': { standard: 4, deluxe: 1, suite: 0 }, 'City Loft': { standard: 2, deluxe: 0, suite: 1 } }[b.hotel] || {}; if (!free[args.room_type]) return { error: 'no free room of this type' }; const price = { standard: b.hotel === 'City Loft' ? 160 : 140, deluxe: b.hotel === 'City Loft' ? 230 : 210, suite: b.hotel === 'City Loft' ? 390 : 380 }[args.room_type]; b.room_type = args.room_type; b.price_per_night_usd = price; return { ok: true, booking_id: b.id, room_type: b.room_type, price_per_night_usd: price };"
+    },
+    {
+      "name": "cancel_booking",
+      "description": "Cancels a booking. fee_usd is the cancellation fee to charge (0 for a free cancellation). Gives ok, or an error.",
+      "parameters": { "type": "object", "properties": { "booking_id": { "type": "string" }, "fee_usd": { "type": "number" } }, "required": ["booking_id", "fee_usd"] },
+      "sideEffects": true,
+      "adapter": "mock",
+      "mock": "const b = (state.bookings || {})[args.booking_id]; if (!b) return { error: 'no booking with this id (get it first)' }; if (b.status === 'cancelled') return { error: 'already cancelled' }; b.status = 'cancelled'; return { ok: true, booking_id: b.id, fee_usd: args.fee_usd };"
+    }
+  ]
+}

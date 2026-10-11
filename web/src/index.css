@@ -1,0 +1,233 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+@import "@xyflow/react/dist/style.css";
+
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, monospace;
+
+  --color-bg: #0b0c0e;
+  --color-panel: #111317;
+  --color-panel-2: #161920;
+  --color-line: #232731;
+  --color-line-2: #2e3340;
+  --color-fg: #e8eaee;
+  --color-muted: #9097a4;
+  --color-faint: #5d6472;
+
+  --color-ember: #f97316;
+  --color-ember-2: #fb923c;
+  --color-s1: #fbbf24; /* System 1 — Jev decisions */
+  --color-s2: #a78bfa; /* System 2 — LLM reasoning */
+  --color-ok: #34d399;
+  --color-bad: #f87171;
+  --color-warn: #fbbf24;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "cv11", "ss01";
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-ember) 35%, transparent);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-2) transparent;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.card {
+  background: var(--color-panel);
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-radius: 8px;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  border: 1px solid var(--color-line-2);
+  background: var(--color-panel-2);
+  color: var(--color-fg);
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    opacity 0.15s;
+  white-space: nowrap;
+}
+.btn:hover:not(:disabled) {
+  border-color: #3b4252;
+  background: #1c2029;
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn-primary {
+  background: var(--color-ember);
+  border-color: var(--color-ember);
+  color: #1a0a00;
+  font-weight: 600;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-ember-2);
+  border-color: var(--color-ember-2);
+}
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-muted);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--color-panel-2);
+  color: var(--color-fg);
+  border-color: transparent;
+}
+.btn-danger:hover:not(:disabled) {
+  border-color: var(--color-bad);
+  color: var(--color-bad);
+}
+
+.input {
+  width: 100%;
+  background: var(--color-bg);
+  border: 1px solid var(--color-line-2);
+  border-radius: 8px;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.875rem;
+  color: var(--color-fg);
+  outline: none;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.input:focus {
+  border-color: var(--color-ember);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-ember) 18%, transparent);
+}
+
+.label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-faint);
+}
+
+.tab {
+  padding: 0.55rem 0.2rem;
+  font-size: 0.8125rem;
+  color: var(--color-muted);
+  border-bottom: 2px solid transparent;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+}
+.tab:hover {
+  color: var(--color-fg);
+}
+.tab[data-active="true"] {
+  color: var(--color-fg);
+  border-color: var(--color-ember);
+}
+
+.pulse-dot {
+  animation: pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.fade-in {
+  animation: fadein 0.25s ease-out;
+}
+@keyframes fadein {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.shimmer {
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-ember) 18%, transparent), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* React Flow theming */
+.react-flow {
+  --xy-background-color: transparent;
+  --xy-edge-stroke: #3b4252;
+  --xy-edge-stroke-selected: var(--color-ember);
+  --xy-attribution-background-color: transparent;
+  --xy-controls-button-background-color: var(--color-panel-2);
+  --xy-controls-button-background-color-hover: #1f2430;
+  --xy-controls-button-color: var(--color-muted);
+  --xy-controls-button-border-color: var(--color-line);
+}
+.react-flow__attribution {
+  opacity: 0.35;
+  font-size: 9px;
+}
+.react-flow__attribution a {
+  color: var(--color-faint);
+}
+.react-flow__edge-textbg {
+  fill: var(--color-panel);
+}
+.react-flow__edge-text {
+  fill: var(--color-muted);
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+.react-flow__handle {
+  width: 7px;
+  height: 7px;
+  background: var(--color-line-2);
+  border: none;
+}
+
+.cm-editor {
+  font-size: 12px;
+}
+.cm-editor.cm-focused {
+  outline: none;
+}

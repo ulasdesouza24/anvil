@@ -1,0 +1,239 @@
+{
+  "type": "x_currency_convert",
+  "title": "Currency Convert",
+  "category": "tool",
+  "description": "Converts an amount of money from one currency to another using live ECB reference rates via the keyless frankfurter.app API. Returns the converted amount, the exchange rate, and the rate date.",
+  "whenToUse": "Use whenever a workflow needs to convert a monetary amount between currencies at current ECB reference rates, e.g. normalizing prices to a base currency or displaying localized amounts.",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "amount": {
+        "type": "number",
+        "description": "The amount of money to convert"
+      },
+      "from": {
+        "type": "string",
+        "description": "Source currency code, e.g. USD",
+        "minLength": 3,
+        "maxLength": 3
+      },
+      "to": {
+        "type": "string",
+        "description": "Target currency code, e.g. EUR",
+        "minLength": 3,
+        "maxLength": 3
+      }
+    },
+    "required": [
+      "amount",
+      "from",
+      "to"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "amount": {
+        "type": "number",
+        "description": "Original amount"
+      },
+      "from": {
+        "type": "string",
+        "description": "Source currency code"
+      },
+      "to": {
+        "type": "string",
+        "description": "Target currency code"
+      },
+      "converted": {
+        "type": "number",
+        "description": "Converted amount"
+      },
+      "rate": {
+        "type": "number",
+        "description": "Exchange rate applied (to per from)"
+      },
+      "date": {
+        "type": "string",
+        "description": "Date of the reference rate (YYYY-MM-DD)"
+      }
+    }
+  },
+  "example": {
+    "amount": 100,
+    "from": "USD",
+    "to": "EUR"
+  },
+  "sideEffects": false,
+  "secrets": [],
+  "impl": {
+    "kind": "http",
+    "request": {
+      "method": "GET",
+      "url": "https://api.frankfurter.app/latest",
+      "query": {
+        "amount": "{{config.amount}}",
+        "from": "{{config.from}}",
+        "to": "{{config.to}}"
+      }
+    },
+    "transform": "return { amount: config.amount, from: response.base, to: Object.keys(response.rates)[0], converted: response.rates[Object.keys(response.rates)[0]], rate: response.rates[Object.keys(response.rates)[0]] / config.amount, date: response.date };",
+    "timeoutMs": 20000
+  },
+  "tests": [
+    {
+      "name": "converts USD to EUR",
+      "config": {
+        "amount": 100,
+        "from": "USD",
+        "to": "EUR"
+      },
+      "checks": [
+        {
+          "path": "converted",
+          "op": "type",
+          "value": "number"
+        },
+        {
+          "path": "rate",
+          "op": "type",
+          "value": "number"
+        },
+        {
+          "path": "to",
+          "op": "equals",
+          "value": "EUR"
+        },
+        {
+          "path": "date",
+          "op": "matches",
+          "value": "^\\d{4}-\\d{2}-\\d{2}$"
+        }
+      ]
+    },
+    {
+      "name": "converts EUR to JPY",
+      "config": {
+        "amount": 50,
+        "from": "EUR",
+        "to": "JPY"
+      },
+      "checks": [
+        {
+          "path": "converted",
+          "op": "type",
+          "value": "number"
+        },
+        {
+          "path": "converted",
+          "op": "minLength",
+          "value": 1
+        },
+        {
+          "path": "from",
+          "op": "equals",
+          "value": "EUR"
+        }
+      ]
+    }
+  ],
+  "version": 1,
+  "createdBy": "anvil",
+  "createdAt": 1790547382049,
+  "approved": true,
+  "status": "passed",
+  "testReport": [
+    {
+      "name": "converts USD to EUR",
+      "passed": true,
+      "output": {
+        "amount": 100,
+        "from": "USD",
+        "to": "EUR",
+        "converted": 87.7,
+        "rate": 0.877,
+        "date": "2026-09-25"
+      },
+      "checks": [
+        {
+          "check": {
+            "path": "converted",
+            "op": "type",
+            "value": "number"
+          },
+          "passed": true,
+          "actual": 87.7
+        },
+        {
+          "check": {
+            "path": "rate",
+            "op": "type",
+            "value": "number"
+          },
+          "passed": true,
+          "actual": 0.877
+        },
+        {
+          "check": {
+            "path": "to",
+            "op": "equals",
+            "value": "EUR"
+          },
+          "passed": true,
+          "actual": "EUR"
+        },
+        {
+          "check": {
+            "path": "date",
+            "op": "matches",
+            "value": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "passed": true,
+          "actual": "2026-09-25"
+        }
+      ]
+    },
+    {
+      "name": "converts EUR to JPY",
+      "passed": true,
+      "output": {
+        "amount": 50,
+        "from": "EUR",
+        "to": "JPY",
+        "converted": 8985,
+        "rate": 179.7,
+        "date": "2026-09-25"
+      },
+      "checks": [
+        {
+          "check": {
+            "path": "converted",
+            "op": "type",
+            "value": "number"
+          },
+          "passed": true,
+          "actual": 8985
+        },
+        {
+          "check": {
+            "path": "converted",
+            "op": "minLength",
+            "value": 1
+          },
+          "passed": true,
+          "actual": 8985
+        },
+        {
+          "check": {
+            "path": "from",
+            "op": "equals",
+            "value": "EUR"
+          },
+          "passed": true,
+          "actual": "EUR"
+        }
+      ]
+    }
+  ],
+  "history": []
+}

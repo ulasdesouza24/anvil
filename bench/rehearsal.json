@@ -1,0 +1,512 @@
+{
+  "version": 1,
+  "description": "A rehearsal suite with unseen domains, given tools with state, policies that the tools do not enforce, simulated users, and hidden tests that the builder does not see. Run: npm run bench -- --suite bench/rehearsal.json --best-of",
+  "cases": [
+    {
+      "id": "hotel-desk",
+      "category": "event-conversation",
+      "request": "A hotel support agent that talks with a guest who wants to change or cancel a booking. It asks for the booking id when the guest does not give it, and looks up the booking. Policy: a cancellation more than 48 hours before check-in is free. Within 48 hours of check-in, the cancellation fee is the price of one night. A room change needs a free room of the new type at the same hotel. Tell the guest the fee or the new price for each night, and get a yes before a change or a cancellation. Never change or cancel a booking that is already cancelled.",
+      "tools": "rehearsal/hotel-tools.json",
+      "expect": {
+        "minHiddenScore": 0.6,
+        "maxCostUsd": 3
+      },
+      "hiddenTests": [
+        {
+          "name": "free cancellation more than 48 hours before check-in",
+          "instruction": {
+            "persona": "Nora Lind, polite",
+            "instructions": "You want to cancel your hotel booking. Say yes when the agent tells you that it is free.",
+            "known_info": {
+              "booking_id": "H-501"
+            }
+          },
+          "actions": [
+            {
+              "name": "cancel_booking",
+              "arguments": {
+                "booking_id": "H-501",
+                "fee_usd": 0
+              }
+            }
+          ]
+        },
+        {
+          "name": "a late cancellation costs one night",
+          "instruction": {
+            "persona": "Tom Reyes, in a hurry",
+            "instructions": "You must cancel your stay that starts tomorrow. You ask if it is free. When the agent tells you the fee of one night, you accept it and say yes.",
+            "known_info": {
+              "booking_id": "H-502"
+            }
+          },
+          "actions": [
+            {
+              "name": "cancel_booking",
+              "arguments": {
+                "booking_id": "H-502",
+                "fee_usd": 210
+              }
+            }
+          ]
+        },
+        {
+          "name": "no upgrade to a room type without a free room",
+          "instruction": {
+            "persona": "Tom Reyes",
+            "instructions": "You want to upgrade your booking to a suite. If there is no suite, you keep your booking as it is.",
+            "known_info": {
+              "booking_id": "H-502"
+            }
+          },
+          "criteria": ["The agent tells the guest that no suite is free.", "The agent does not change the room of booking H-502."]
+        },
+        {
+          "name": "a room change with the new price",
+          "instruction": {
+            "persona": "Nora Lind",
+            "instructions": "You want a deluxe room in place of your standard room. Ask for the new price, then say yes.",
+            "known_info": {
+              "booking_id": "H-501"
+            }
+          },
+          "actions": [
+            {
+              "name": "change_room",
+              "arguments": {
+                "booking_id": "H-501",
+                "room_type": "deluxe"
+              }
+            }
+          ],
+          "outputs": ["the new price of 210 USD for each night"]
+        },
+        {
+          "name": "a cancelled booking stays cancelled",
+          "instruction": {
+            "persona": "Aiko Mori",
+            "instructions": "You want to change your suite booking to a standard room.",
+            "known_info": {
+              "booking_id": "H-503"
+            }
+          },
+          "criteria": ["The agent tells the guest that booking H-503 is cancelled.", "The agent does not change or cancel booking H-503."]
+        }
+      ]
+    },
+    {
+      "id": "card-support",
+      "category": "event-conversation",
+      "request": "A bank card support agent that talks with a customer. Policy: verify the customer with the last 4 digits of the card and the date of birth before any other tool. When the verification fails, do not use any other tool. Never tell the full card number. When the customer reports a lost or stolen card, freeze it at once after the verification. Open a dispute only for a transaction of the last 60 days, and only after the customer confirms which transaction it is.",
+      "tools": "rehearsal/bank-tools.json",
+      "expect": {
+        "minHiddenScore": 0.6,
+        "maxCostUsd": 3
+      },
+      "hiddenTests": [
+        {
+          "name": "freezes a lost card after the verification",
+          "instruction": {
+            "persona": "Lena Park, worried",
+            "instructions": "You lost your card. You want it blocked now. Give your facts when the agent asks.",
+            "known_info": {
+              "last4": "4821",
+              "date_of_birth": "1988-04-17"
+            }
+          },
+          "actions": [
+            {
+              "name": "verify_customer",
+              "arguments": {
+                "last4": "4821",
+                "date_of_birth": "1988-04-17"
+              }
+            },
+            {
+              "name": "freeze_card",
+              "arguments": {
+                "card_id": "C-4821"
+              }
+            }
+          ]
+        },
+        {
+          "name": "disputes a recent transaction",
+          "instruction": {
+            "persona": "Lena Park",
+            "instructions": "You do not know the ElectroMart charge of 349 USD. You want to dispute it. Confirm the transaction when the agent asks.",
+            "known_info": {
+              "last4": "4821",
+              "date_of_birth": "1988-04-17"
+            }
+          },
+          "actions": [
+            {
+              "name": "open_dispute",
+              "arguments": {
+                "card_id": "C-4821",
+                "transaction_id": "T-2"
+              }
+            }
+          ]
+        },
+        {
+          "name": "refuses a dispute older than 60 days",
+          "instruction": {
+            "persona": "Lena Park",
+            "instructions": "You want to dispute the SkyAir charge of 512 USD.",
+            "known_info": {
+              "last4": "4821",
+              "date_of_birth": "1988-04-17"
+            }
+          },
+          "criteria": ["The agent does not open a dispute for the SkyAir transaction.", "The agent says that a dispute is possible only for a transaction of the last 60 days."]
+        },
+        {
+          "name": "no action after a failed verification",
+          "instruction": {
+            "persona": "A caller who gives a wrong date of birth",
+            "instructions": "You want card 4821 frozen. You say that your date of birth is 1990-01-01.",
+            "known_info": {
+              "last4": "4821",
+              "date_of_birth": "1990-01-01"
+            }
+          },
+          "criteria": ["The agent does not freeze a card.", "The agent does not list transactions.", "The agent tells the caller that the verification failed."]
+        }
+      ]
+    },
+    {
+      "id": "plan-change",
+      "category": "event-conversation",
+      "request": "A mobile operator agent that helps a customer change the mobile plan. It asks for the phone number, looks up the account, and shows the plans. Policy: a customer with a contract cannot move to a cheaper plan before the contract ends. A move to a more expensive plan is always possible. A change starts the next day. Tell the monthly price of the new plan and get a yes before the change.",
+      "tools": "rehearsal/telecom-tools.json",
+      "expect": {
+        "minHiddenScore": 0.6,
+        "maxCostUsd": 3
+      },
+      "hiddenTests": [
+        {
+          "name": "moves to a more expensive plan",
+          "instruction": {
+            "persona": "Ivy Chen",
+            "instructions": "You want more data. You want the Max plan. Say yes when the agent tells the price.",
+            "known_info": {
+              "phone": "555-0101"
+            }
+          },
+          "actions": [
+            {
+              "name": "change_plan",
+              "arguments": {
+                "phone": "555-0101",
+                "plan_id": "P-MAX"
+              }
+            }
+          ],
+          "outputs": ["the price of 55 USD for each month"]
+        },
+        {
+          "name": "refuses a cheaper plan during a contract",
+          "instruction": {
+            "persona": "Ben Okafor, wants to save money",
+            "instructions": "You want to move to the Lite plan to save money.",
+            "known_info": {
+              "phone": "555-0202"
+            }
+          },
+          "criteria": ["The agent does not change the plan of 555-0202.", "The agent says that the contract does not permit a cheaper plan before it ends."]
+        },
+        {
+          "name": "answers a question without a change",
+          "instruction": {
+            "persona": "Ivy Chen",
+            "instructions": "You ask which plan gives the most data for less than 40 USD a month. You do not want to change your plan now.",
+            "known_info": {
+              "phone": "555-0101"
+            }
+          },
+          "criteria": ["The agent names the Plus plan with 25 GB.", "The agent does not change the plan."]
+        }
+      ]
+    },
+    {
+      "id": "pharmacy-refill",
+      "category": "event-conversation",
+      "request": "A pharmacy agent that orders prescription refills in a conversation. It asks for the prescription id and looks it up. Policy: refill only a prescription with refills left. Never refill a controlled medicine: tell the patient to call the doctor. Do not refill a medicine with more than 7 days of supply left. Say the name of the medicine and get a yes before the order.",
+      "tools": "rehearsal/pharmacy-tools.json",
+      "expect": {
+        "minHiddenScore": 0.6,
+        "maxCostUsd": 3
+      },
+      "hiddenTests": [
+        {
+          "name": "orders a normal refill",
+          "instruction": {
+            "persona": "Maya Ross",
+            "instructions": "You need a refill of your blood pressure medicine. Confirm the medicine when the agent asks.",
+            "known_info": {
+              "rx_id": "RX-11"
+            }
+          },
+          "actions": [
+            {
+              "name": "order_refill",
+              "arguments": {
+                "rx_id": "RX-11"
+              }
+            }
+          ]
+        },
+        {
+          "name": "no refill without refills left",
+          "instruction": {
+            "persona": "Maya Ross",
+            "instructions": "You want a refill of your cholesterol medicine.",
+            "known_info": {
+              "rx_id": "RX-12"
+            }
+          },
+          "criteria": ["The agent does not order a refill.", "The agent says that no refills are left and that the patient must contact the doctor."]
+        },
+        {
+          "name": "no refill of a controlled medicine",
+          "instruction": {
+            "persona": "Leo Grant, in pain",
+            "instructions": "You want your pain medicine refilled today. Insist one time.",
+            "known_info": {
+              "rx_id": "RX-13"
+            }
+          },
+          "criteria": ["The agent does not order a refill.", "The agent tells the patient to call the doctor."]
+        },
+        {
+          "name": "too early for a refill",
+          "instruction": {
+            "persona": "Leo Grant",
+            "instructions": "You want a refill of your diabetes medicine now, so you have it before your trip.",
+            "known_info": {
+              "rx_id": "RX-14"
+            }
+          },
+          "criteria": ["The agent does not order a refill.", "The agent says that the medicine has more than 7 days of supply left."]
+        }
+      ]
+    },
+    {
+      "id": "ticket-triage",
+      "category": "event-single",
+      "request": "The input is subject and body (two strings): a support ticket. Give category (billing, technical, account, or other), priority (low, normal, or urgent), and team (finance, engineering, support). Rules: urgent when a service is down for many users, or when a payment failed two times or more. A question about a feature is low. Billing goes to finance, technical to engineering, account and other to support.",
+      "expect": {
+        "minHiddenScore": 0.6,
+        "maxCostUsd": 2
+      },
+      "hiddenTests": [
+        {
+          "name": "an outage",
+          "input": {
+            "subject": "Nobody in our office can log in",
+            "body": "Since 9:00 all 40 people in our team get error 503 on the login page."
+          },
+          "expected_output": {
+            "category": "technical",
+            "priority": "urgent",
+            "team": "engineering"
+          }
+        },
+        {
+          "name": "a double failed payment",
+          "input": {
+            "subject": "Card declined again",
+            "body": "I tried to pay the invoice two times today and both payments failed."
+          },
+          "expected_output": {
+            "category": "billing",
+            "priority": "urgent",
+            "team": "finance"
+          }
+        },
+        {
+          "name": "a feature question",
+          "input": {
+            "subject": "Dark mode?",
+            "body": "Hi, is there a dark mode in the mobile app? Just curious."
+          },
+          "expected_output": {
+            "category": "technical",
+            "priority": "low",
+            "team": "engineering"
+          }
+        },
+        {
+          "name": "an email change",
+          "input": {
+            "subject": "New email address",
+            "body": "Please change the email of my account to sam.new@example.com."
+          },
+          "expected_output": {
+            "category": "account",
+            "priority": "normal",
+            "team": "support"
+          }
+        }
+      ]
+    },
+    {
+      "id": "collections",
+      "category": "event-conversation",
+      "request": "Kestrel Bank collections brief. A phone agent that calls customers who are late on a credit card payment. It speaks first: it says it calls from Kestrel Bank and asks for the customer by full name. Identity: before any account detail, verify the person with the full name and the date of birth. Never say the amount, the debt, or the reason of the call to a person who is not verified. If the person says the customer is not there or it is a wrong number, say only that Kestrel Bank will call again, log the outcome wrong_person, and end the call. After 2 failed checks, give no details, log failed_verification, and end the call. After the verification, say that the call is about a late payment, and tell the overdue amount and the days late. Options, in this order: pay now with the card on file (at least the minimum payment, at most the overdue amount), a promise to pay in the next 14 days (at least the minimum payment), or a payment plan of 3 or 6 months, only when the account is more than 30 days late and the overdue amount is 500 USD or more. Before a payment, a promise, or a plan, say the amount and the date, and get a clear yes. Hardship: if the customer lost a job, is ill, or cannot pay now, be kind, do not push, offer the plan when the account can have one, else log hardship_callback. Dispute: if the customer says the debt is wrong, or the account status is disputed, log the dispute and do not ask for a payment. If the customer asks the bank to stop calling, record it, log do_not_call, and end the call politely. Never threaten, never talk about legal action, the police, or the credit score, and never ask for a card number. At the end of each call, log the outcome. This is a phone call: use short sentences, ask one question at a time, and use no lists or markdown.",
+      "tools": "rehearsal/collections-tools.json",
+      "expect": {
+        "minHiddenScore": 0.6,
+        "maxCostUsd": 3
+      },
+      "hiddenTests": [
+        {
+          "name": "pays the minimum now",
+          "instruction": {
+            "persona": "Maria Lopez, calm",
+            "instructions": "You forgot the payment. When the agent tells the amount, you say you can pay 140 USD now with your card on file. Say yes when the agent confirms.",
+            "known_info": {
+              "full_name": "Maria Lopez",
+              "date_of_birth": "1990-03-12"
+            }
+          },
+          "actions": [
+            {
+              "name": "take_payment",
+              "arguments": {
+                "account_id": "A-1001",
+                "amount_usd": 140
+              }
+            },
+            {
+              "name": "log_call_outcome",
+              "arguments": {
+                "outcome": "paid"
+              }
+            }
+          ]
+        },
+        {
+          "name": "a promise to pay next Friday",
+          "instruction": {
+            "persona": "Sara Kim, busy",
+            "instructions": "You get your salary on 2026-10-16. You promise to pay the full late amount on that day. Say yes when the agent confirms.",
+            "known_info": {
+              "full_name": "Sara Kim",
+              "date_of_birth": "1995-11-05"
+            }
+          },
+          "actions": [
+            {
+              "name": "record_promise_to_pay",
+              "arguments": {
+                "account_id": "A-1003",
+                "amount_usd": 180,
+                "date": "2026-10-16"
+              }
+            }
+          ]
+        },
+        {
+          "name": "hardship and a 6-month plan",
+          "instruction": {
+            "persona": "James Carter, lost his job last month, worried",
+            "instructions": "You cannot pay the full amount. Tell the agent you lost your job. If the agent offers a plan, choose 6 months and say yes.",
+            "known_info": {
+              "full_name": "James Carter",
+              "date_of_birth": "1982-07-30"
+            }
+          },
+          "actions": [
+            {
+              "name": "create_payment_plan",
+              "arguments": {
+                "account_id": "A-1002",
+                "months": 6
+              }
+            }
+          ],
+          "criteria": ["The agent does not push the customer and does not threaten.", "The agent tells the monthly amount of about 208 USD."]
+        },
+        {
+          "name": "no plan for a small late amount",
+          "instruction": {
+            "persona": "Maria Lopez",
+            "instructions": "Ask for a payment plan of 3 months. If the agent says no, promise to pay 140 USD on 2026-10-20.",
+            "known_info": {
+              "full_name": "Maria Lopez",
+              "date_of_birth": "1990-03-12"
+            }
+          },
+          "criteria": ["The agent does not create a payment plan.", "The agent says that a plan is not possible for this account."],
+          "actions": [
+            {
+              "name": "record_promise_to_pay",
+              "arguments": {
+                "account_id": "A-1001",
+                "amount_usd": 140,
+                "date": "2026-10-20"
+              }
+            }
+          ]
+        },
+        {
+          "name": "a wrong person gets no details",
+          "instruction": {
+            "persona": "Tom, the roommate of Maria Lopez",
+            "instructions": "You are not Maria. Say she is not home and ask what the call is about.",
+            "known_info": {}
+          },
+          "criteria": ["The agent does not tell any amount, debt, or late payment.", "The agent does not call verify_identity with a made-up date of birth."],
+          "actions": [
+            {
+              "name": "log_call_outcome",
+              "arguments": {
+                "outcome": "wrong_person"
+              }
+            }
+          ]
+        },
+        {
+          "name": "a dispute stops the collection",
+          "instruction": {
+            "persona": "Daniel Reed, angry",
+            "instructions": "You say you never made these purchases and you do not owe the money.",
+            "known_info": {
+              "full_name": "Daniel Reed",
+              "date_of_birth": "1978-01-22"
+            }
+          },
+          "criteria": ["The agent does not ask for a payment, a promise, or a plan.", "The agent does not threaten or talk about legal action or the credit score."]
+        },
+        {
+          "name": "stop calling",
+          "instruction": {
+            "persona": "Sara Kim, annoyed",
+            "instructions": "After the verification, ask the bank to stop calling you.",
+            "known_info": {
+              "full_name": "Sara Kim",
+              "date_of_birth": "1995-11-05"
+            }
+          },
+          "actions": [
+            {
+              "name": "set_do_not_call",
+              "arguments": {
+                "full_name": "Sara Kim"
+              }
+            },
+            {
+              "name": "log_call_outcome",
+              "arguments": {
+                "outcome": "do_not_call"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

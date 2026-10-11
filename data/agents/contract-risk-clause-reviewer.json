@@ -1,0 +1,3118 @@
+{
+  "id": "contract-risk-clause-reviewer",
+  "name": "Contract Risk Clause Reviewer",
+  "description": "Analyzes contract text for five risk categories, produces a quote-verified structured review, and holds it pending until a human reviewer approves it.",
+  "createdAt": 1790531373769,
+  "updatedAt": 1790531793199,
+  "currentVersion": 2,
+  "versions": [
+    {
+      "version": 1,
+      "spec": {
+        "specVersion": "anvil/v1",
+        "id": "contract-risk-clause-reviewer",
+        "name": "Contract Risk Clause Reviewer",
+        "description": "Analyzes contract text for five risk categories, produces a quote-verified structured review, and holds it pending until a human reviewer approves it.",
+        "version": 1,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "contract_text": {
+              "type": "string",
+              "description": "The full text of the contract to review (plain text or pasted document content)."
+            },
+            "contract_title": {
+              "type": "string",
+              "description": "Optional human-readable name or identifier of the contract for labeling the review."
+            },
+            "reviewer_notes": {
+              "type": "string",
+              "description": "Optional context from the requester, e.g., which side of the contract they are on or specific concerns."
+            },
+            "approval_decision": {
+              "type": "object",
+              "description": "Human reviewer's decision on the draft review: approve (boolean), reviewer name, and optional comments."
+            }
+          },
+          "required": [
+            "contract_text"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "risk_findings": {
+              "type": "array"
+            },
+            "review_status": {
+              "type": "string",
+              "enum": [
+                "pending_approval",
+                "final",
+                "error"
+              ]
+            },
+            "approval_record": {
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "coverage_summary": {
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "nodes": [
+          {
+            "id": "input",
+            "type": "input",
+            "name": "Input",
+            "config": {}
+          },
+          {
+            "id": "validate_contract",
+            "type": "code",
+            "name": "Validate contract text",
+            "description": "Check the text is non-empty, long enough, and plausibly contract-like English; normalize whitespace.",
+            "config": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "valid": {
+                    "type": "boolean"
+                  },
+                  "cleaned_text": {
+                    "type": "string"
+                  },
+                  "error": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "valid",
+                  "cleaned_text",
+                  "error"
+                ]
+              },
+              "code": "const raw = input.contract_text || '';\nconst cleaned = raw.replace(/\\s+/g, ' ').trim();\nif (cleaned.length < 80) {\n  return { valid: false, cleaned_text: '', error: 'Contract text is empty or too short to review. Please provide the full contract text.' };\n}\nconst markers = ['agreement', 'party', 'parties', 'term', 'liability', 'termination', 'hereby', 'shall', 'clause', 'section', 'contract', 'renew', 'notice', 'governing'];\nconst lower = cleaned.toLowerCase();\nconst hits = markers.filter(m => lower.includes(m)).length;\nif (hits < 2) {\n  return { valid: false, cleaned_text: '', error: 'The provided text does not appear to be a contract. Please supply contract document text.' };\n}\nreturn { valid: true, cleaned_text: cleaned, error: null };"
+            }
+          },
+          {
+            "id": "validity_gate",
+            "type": "router",
+            "name": "Validity gate",
+            "description": "Route to extraction if the text is a valid contract, otherwise to the error path.",
+            "config": {
+              "rules": [
+                {
+                  "port": "valid",
+                  "when": {
+                    "left": "{{nodes.validate_contract.output.valid}}",
+                    "op": "eq",
+                    "right": true
+                  }
+                }
+              ],
+              "default": "invalid"
+            }
+          },
+          {
+            "id": "extract_findings",
+            "type": "llm_structured",
+            "name": "Extract risky clauses",
+            "description": "Scan the contract for the five risk categories and emit severity, verbatim quotes, locations, and plain-English explanations.",
+            "config": {
+              "system": "You are a meticulous contract analyst. You only report what is literally present in the supplied text. Quotes must be copied verbatim from the contract text (whitespace may be normalized). You describe risk in plain English for a non-lawyer; you never give legal advice or litigation strategy, and you never invent clauses or categories beyond the five listed.",
+              "prompt": "Analyze the contract text below for exactly these five risk categories and nothing else:\n1. auto_renewal — automatic renewal/extension terms.\n2. unlimited_liability — uncapped liability, indemnity, or damages exposure.\n3. unilateral_changes — one-sided amendment rights, termination-for-convenience, or assignment without consent.\n4. data_sharing — sharing/transfer of data with third parties, affiliates, or marketing partners.\n5. non_compete — non-compete or non-solicit restrictions.\n\nFor each match, output:\n- category: one of the five keys above.\n- severity: \"low\", \"medium\", or \"high\", judged from the perspective of the party receiving the contract. Uncapped indemnity/liability = high; auto-renewal with a workable notice window = medium; narrow non-solicit = low.\n- quote: the verbatim operative clause language from the contract text, trimmed to the relevant sentence(s), at most ~75 words. Do not paraphrase or fabricate.\n- location: section number or heading if identifiable, otherwise \"\".\n- explanation: plain English, under 100 words: what the clause does, who it favors, and the practical consequence. Avoid legal jargon; if a term of art is needed, define it in parentheses.\n\nReviewer context (may indicate which side the requester is on): {{input.reviewer_notes ?? \"none provided\"}}\n\nCONTRACT TEXT:\n{{nodes.validate_contract.output.cleaned_text}}\n\nReturn only findings for clauses actually present. If a category has no matching clause, simply omit it from the findings array.",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "findings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "category": {
+                          "type": "string",
+                          "enum": [
+                            "auto_renewal",
+                            "unlimited_liability",
+                            "unilateral_changes",
+                            "data_sharing",
+                            "non_compete"
+                          ]
+                        },
+                        "severity": {
+                          "type": "string",
+                          "enum": [
+                            "low",
+                            "medium",
+                            "high"
+                          ]
+                        },
+                        "quote": {
+                          "type": "string"
+                        },
+                        "location": {
+                          "type": "string"
+                        },
+                        "explanation": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "category",
+                        "severity",
+                        "quote",
+                        "location",
+                        "explanation"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "findings"
+                ]
+              },
+              "model": "fast",
+              "temperature": 0,
+              "branch": {
+                "from": "validity_gate",
+                "port": "valid"
+              }
+            }
+          },
+          {
+            "id": "build_coverage",
+            "type": "code",
+            "name": "Verify quotes & build coverage",
+            "description": "Drop any finding whose quote is not verbatim in the contract text and build the five-category coverage summary.",
+            "config": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "findings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "category": {
+                          "type": "string"
+                        },
+                        "severity": {
+                          "type": "string"
+                        },
+                        "quote": {
+                          "type": "string"
+                        },
+                        "location": {
+                          "type": "string"
+                        },
+                        "explanation": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "category",
+                        "severity",
+                        "quote",
+                        "location",
+                        "explanation"
+                      ]
+                    }
+                  },
+                  "coverage_summary": {
+                    "type": "object",
+                    "properties": {
+                      "auto_renewal": {
+                        "type": "string"
+                      },
+                      "unlimited_liability": {
+                        "type": "string"
+                      },
+                      "unilateral_changes": {
+                        "type": "string"
+                      },
+                      "data_sharing": {
+                        "type": "string"
+                      },
+                      "non_compete": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "auto_renewal",
+                      "unlimited_liability",
+                      "unilateral_changes",
+                      "data_sharing",
+                      "non_compete"
+                    ]
+                  }
+                },
+                "required": [
+                  "findings",
+                  "coverage_summary"
+                ]
+              },
+              "code": "const norm = s => (s || '').toLowerCase().replace(/\\s+/g, ' ').trim();\nconst text = norm(nodes.validate_contract.output.cleaned_text);\nconst cats = ['auto_renewal', 'unlimited_liability', 'unilateral_changes', 'data_sharing', 'non_compete'];\nconst all = nodes.extract_findings.output.findings || [];\nconst findings = all.filter(f => cats.includes(f.category) && f.quote && text.includes(norm(f.quote)));\nconst coverage_summary = {};\nfor (const c of cats) {\n  const n = findings.filter(f => f.category === c).length;\n  coverage_summary[c] = n > 0 ? 'detected (' + n + ' finding' + (n > 1 ? 's' : '') + ')' : 'not detected';\n}\nreturn { findings, coverage_summary };"
+            }
+          },
+          {
+            "id": "assemble_draft",
+            "type": "transform",
+            "name": "Assemble draft review",
+            "description": "Combine findings, coverage, and context into a draft review marked pending_approval.",
+            "config": {
+              "value": {
+                "draft": {
+                  "risk_findings": "{{nodes.build_coverage.output.findings}}",
+                  "coverage_summary": "{{nodes.build_coverage.output.coverage_summary}}",
+                  "contract_title": "{{input.contract_title ?? \"Untitled contract\"}}",
+                  "reviewer_notes": "{{input.reviewer_notes ?? \"\"}}",
+                  "review_status": "pending_approval"
+                }
+              },
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "draft": {
+                    "type": "object",
+                    "properties": {
+                      "risk_findings": {
+                        "type": "array"
+                      },
+                      "coverage_summary": {
+                        "type": "object"
+                      },
+                      "contract_title": {
+                        "type": "string"
+                      },
+                      "reviewer_notes": {
+                        "type": "string"
+                      },
+                      "review_status": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "risk_findings",
+                      "coverage_summary",
+                      "contract_title",
+                      "reviewer_notes",
+                      "review_status"
+                    ]
+                  }
+                },
+                "required": [
+                  "draft"
+                ]
+              }
+            }
+          },
+          {
+            "id": "human_review",
+            "type": "human_approval",
+            "name": "Human review of draft",
+            "description": "Pause for a human reviewer to approve the draft or reject it with comments.",
+            "config": {
+              "title": "Approve contract risk review",
+              "message": "Draft risk review for: {{nodes.assemble_draft.output.draft.contract_title}}. Approve to mark it final, or reject with comments requesting corrections (e.g., quote adjustments).",
+              "payload": "{{nodes.assemble_draft.output.draft | json}}"
+            }
+          },
+          {
+            "id": "apply_corrections",
+            "type": "llm_structured",
+            "name": "Apply approval corrections",
+            "description": "On approval, apply any comment-driven quote corrections and re-verify against the contract text; pass through unchanged if no comments.",
+            "config": {
+              "system": "You are a meticulous contract analyst. You only make the specific corrections requested in the reviewer comments. Quotes must remain verbatim excerpts of the supplied contract text. Never add new findings or categories.",
+              "prompt": "A human reviewer has APPROVED this contract risk review, possibly with comments requesting corrections.\n\nDRAFT FINDINGS:\n{{nodes.build_coverage.output.findings | json}}\n\nCOVERAGE SUMMARY:\n{{nodes.build_coverage.output.coverage_summary | json}}\n\nREVIEWER COMMENTS (may be empty — if empty, return the findings and coverage summary unchanged):\n{{nodes.human_review.output.comment ?? \"\"}}\n\nCONTRACT TEXT (for verifying quotes):\n{{nodes.validate_contract.output.cleaned_text}}\n\nApply only the requested corrections (e.g., extend a quote to include a carve-out sentence, keeping it verbatim). Keep severity values within low/medium/high and categories within the five allowed. Return the full corrected findings array and the coverage summary.",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "risk_findings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "category": {
+                          "type": "string",
+                          "enum": [
+                            "auto_renewal",
+                            "unlimited_liability",
+                            "unilateral_changes",
+                            "data_sharing",
+                            "non_compete"
+                          ]
+                        },
+                        "severity": {
+                          "type": "string",
+                          "enum": [
+                            "low",
+                            "medium",
+                            "high"
+                          ]
+                        },
+                        "quote": {
+                          "type": "string"
+                        },
+                        "location": {
+                          "type": "string"
+                        },
+                        "explanation": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "category",
+                        "severity",
+                        "quote",
+                        "location",
+                        "explanation"
+                      ]
+                    }
+                  },
+                  "coverage_summary": {
+                    "type": "object",
+                    "properties": {
+                      "auto_renewal": {
+                        "type": "string"
+                      },
+                      "unlimited_liability": {
+                        "type": "string"
+                      },
+                      "unilateral_changes": {
+                        "type": "string"
+                      },
+                      "data_sharing": {
+                        "type": "string"
+                      },
+                      "non_compete": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "auto_renewal",
+                      "unlimited_liability",
+                      "unilateral_changes",
+                      "data_sharing",
+                      "non_compete"
+                    ]
+                  }
+                },
+                "required": [
+                  "risk_findings",
+                  "coverage_summary"
+                ]
+              },
+              "model": "fast",
+              "temperature": 0,
+              "branch": {
+                "from": "human_review",
+                "port": "approved"
+              }
+            }
+          },
+          {
+            "id": "finalize",
+            "type": "transform",
+            "name": "Finalize review",
+            "description": "Mark the review final and record the approval.",
+            "config": {
+              "value": {
+                "risk_findings": "{{nodes.apply_corrections.output.risk_findings}}",
+                "review_status": "final",
+                "approval_record": {
+                  "reviewer": "{{input.approval_decision.reviewer ?? \"human reviewer\"}}",
+                  "timestamp": null,
+                  "comments": "{{nodes.human_review.output.comment ?? \"\"}}"
+                },
+                "coverage_summary": "{{nodes.apply_corrections.output.coverage_summary}}"
+              },
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "risk_findings": {
+                    "type": "array"
+                  },
+                  "review_status": {
+                    "type": "string"
+                  },
+                  "approval_record": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "coverage_summary": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "risk_findings",
+                  "review_status",
+                  "approval_record",
+                  "coverage_summary"
+                ]
+              },
+              "branch": {
+                "from": "approval_router",
+                "port": "approved"
+              }
+            }
+          },
+          {
+            "id": "revise_draft",
+            "type": "llm_structured",
+            "name": "Revise rejected draft",
+            "description": "On rejection, incorporate reviewer comments into a revised draft that stays pending_approval.",
+            "config": {
+              "system": "You are a meticulous contract analyst. You only revise the draft per the reviewer's comments. Quotes must remain verbatim excerpts of the supplied contract text. Never add new categories beyond the five allowed, and never give legal advice.",
+              "prompt": "A human reviewer has REJECTED this draft contract risk review and provided comments. Revise the findings accordingly (e.g., correct quotes, adjust severity, clarify explanations) and return the revised findings plus the coverage summary. Keep review_status as pending_approval.\n\nDRAFT FINDINGS:\n{{nodes.build_coverage.output.findings | json}}\n\nCOVERAGE SUMMARY:\n{{nodes.build_coverage.output.coverage_summary | json}}\n\nREVIEWER COMMENTS:\n{{nodes.human_review.output.comment ?? \"\"}}\n\nCONTRACT TEXT (for verifying quotes):\n{{nodes.validate_contract.output.cleaned_text}}",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "risk_findings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "category": {
+                          "type": "string",
+                          "enum": [
+                            "auto_renewal",
+                            "unlimited_liability",
+                            "unilateral_changes",
+                            "data_sharing",
+                            "non_compete"
+                          ]
+                        },
+                        "severity": {
+                          "type": "string",
+                          "enum": [
+                            "low",
+                            "medium",
+                            "high"
+                          ]
+                        },
+                        "quote": {
+                          "type": "string"
+                        },
+                        "location": {
+                          "type": "string"
+                        },
+                        "explanation": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "category",
+                        "severity",
+                        "quote",
+                        "location",
+                        "explanation"
+                      ]
+                    }
+                  },
+                  "coverage_summary": {
+                    "type": "object",
+                    "properties": {
+                      "auto_renewal": {
+                        "type": "string"
+                      },
+                      "unlimited_liability": {
+                        "type": "string"
+                      },
+                      "unilateral_changes": {
+                        "type": "string"
+                      },
+                      "data_sharing": {
+                        "type": "string"
+                      },
+                      "non_compete": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "auto_renewal",
+                      "unlimited_liability",
+                      "unilateral_changes",
+                      "data_sharing",
+                      "non_compete"
+                    ]
+                  }
+                },
+                "required": [
+                  "risk_findings",
+                  "coverage_summary"
+                ]
+              },
+              "model": "balanced",
+              "temperature": 0,
+              "branch": {
+                "from": "human_review",
+                "port": "rejected"
+              }
+            }
+          },
+          {
+            "id": "error_result",
+            "type": "transform",
+            "name": "Invalid input error",
+            "description": "Produce an error result instead of a partial review when validation fails.",
+            "config": {
+              "value": {
+                "risk_findings": [],
+                "review_status": "error",
+                "approval_record": null,
+                "coverage_summary": null,
+                "error": "{{nodes.validate_contract.output.error}}"
+              },
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "risk_findings": {
+                    "type": "array"
+                  },
+                  "review_status": {
+                    "type": "string"
+                  },
+                  "approval_record": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "coverage_summary": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "error": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "risk_findings",
+                  "review_status",
+                  "approval_record",
+                  "coverage_summary",
+                  "error"
+                ]
+              },
+              "branch": {
+                "from": "validity_gate",
+                "port": "invalid"
+              }
+            }
+          },
+          {
+            "id": "combine",
+            "type": "merge",
+            "name": "Combine branches",
+            "description": "Join the approved, rejected, and error branches so exactly one result continues.",
+            "config": {
+              "strategy": "first"
+            }
+          },
+          {
+            "id": "emit",
+            "type": "transform",
+            "name": "Emit result",
+            "description": "Shape the final response object from whichever branch ran.",
+            "config": {
+              "value": {
+                "risk_findings": "{{nodes.combine.output.risk_findings}}",
+                "review_status": "{{nodes.combine.output.review_status ?? \"pending_approval\"}}",
+                "approval_record": "{{nodes.combine.output.approval_record ?? null}}",
+                "coverage_summary": "{{nodes.combine.output.coverage_summary ?? nodes.assemble_draft.output.draft.coverage_summary ?? null}}",
+                "error": "{{nodes.combine.output.error ?? null}}"
+              },
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "risk_findings": {
+                    "type": "array"
+                  },
+                  "review_status": {
+                    "type": "string"
+                  },
+                  "approval_record": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "coverage_summary": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "error": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "risk_findings",
+                  "review_status",
+                  "approval_record",
+                  "coverage_summary",
+                  "error"
+                ]
+              }
+            }
+          },
+          {
+            "id": "output",
+            "type": "output",
+            "name": "Output",
+            "config": {
+              "value": {
+                "risk_findings": "{{nodes.emit.output.risk_findings}}",
+                "review_status": "{{nodes.emit.output.review_status}}",
+                "approval_record": "{{nodes.emit.output.approval_record}}",
+                "coverage_summary": "{{nodes.emit.output.coverage_summary}}",
+                "error": "{{nodes.emit.output.error}}"
+              }
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "input",
+            "to": "validate_contract"
+          },
+          {
+            "from": "validate_contract",
+            "to": "validity_gate"
+          },
+          {
+            "from": "validity_gate",
+            "to": "extract_findings",
+            "port": "valid"
+          },
+          {
+            "from": "validity_gate",
+            "to": "error_result",
+            "port": "invalid"
+          },
+          {
+            "from": "extract_findings",
+            "to": "build_coverage"
+          },
+          {
+            "from": "build_coverage",
+            "to": "assemble_draft"
+          },
+          {
+            "from": "assemble_draft",
+            "to": "human_review"
+          },
+          {
+            "from": "human_review",
+            "to": "apply_corrections",
+            "port": "approved"
+          },
+          {
+            "from": "apply_corrections",
+            "to": "finalize"
+          },
+          {
+            "from": "finalize",
+            "to": "combine"
+          },
+          {
+            "from": "revise_draft",
+            "to": "combine"
+          },
+          {
+            "from": "error_result",
+            "to": "combine"
+          },
+          {
+            "from": "combine",
+            "to": "emit"
+          },
+          {
+            "from": "emit",
+            "to": "output"
+          },
+          {
+            "from": "human_review",
+            "to": "revise_draft",
+            "port": "rejected"
+          }
+        ],
+        "policy": {
+          "maxCostUsd": 0.5,
+          "maxNodeExecutions": 500,
+          "timeoutMs": 600000,
+          "requireApprovalForSideEffects": false
+        },
+        "tests": [
+          {
+            "id": "t1",
+            "name": "typical_saas_msa_with_three_flagged_clauses",
+            "input": {
+              "contract_text": "9. Term. This Agreement shall automatically renew for successive one-year terms unless either party provides written notice of non-renewal at least sixty (60) days prior to the end of the then-current term. 12. Limitation of Liability. IN NO EVENT SHALL PROVIDER'S AGGREGATE LIABILITY EXCEED THE FEES PAID IN THE PRIOR THREE (3) MONTHS. 14. Amendments. Company may modify this Agreement at any time upon posting notice to its website. 20. Confidentiality. Each party shall keep confidential information secret.",
+              "contract_title": "SaaS MSA - Acme Corp",
+              "reviewer_notes": "We are the customer; concerned about the liability cap."
+            },
+            "criteria": [
+              "risk_findings contains findings for auto-renewal, unlimited liability, and unilateral changes, each with a verbatim quote from contract_text, a severity in low/medium/high, and a plain-English explanation under 100 words",
+              "coverage_summary accounts for all five categories and states 'not detected' for data sharing and non-compete",
+              "review_status is 'pending_approval' on initial output",
+              "No finding quotes text absent from contract_text"
+            ],
+            "checks": [
+              {
+                "path": "review_status",
+                "op": "equals",
+                "value": "pending_approval"
+              },
+              {
+                "path": "risk_findings",
+                "op": "type",
+                "value": "array"
+              },
+              {
+                "path": "coverage_summary",
+                "op": "contains",
+                "value": "not detected"
+              }
+            ]
+          },
+          {
+            "id": "t2",
+            "name": "edge_employment_agreement_noncompete_and_data_sharing",
+            "input": {
+              "contract_text": "Employee agrees that for a period of two (2) years following termination of employment, Employee shall not directly or indirectly engage in any business competitive with Employer within any state in which Employer operates. Employee consents to the sharing of all performance data with Employer's affiliates and selected marketing partners. This Agreement begins on the Effective Date and continues until terminated by either party for convenience upon thirty (30) days' written notice.",
+              "contract_title": "Employment Agreement - Draft 3",
+              "reviewer_notes": "Candidate-side review; worried about post-employment restrictions."
+            },
+            "criteria": [
+              "risk_findings includes non-compete and data sharing findings with verbatim quotes and severity ratings",
+              "coverage_summary explicitly states 'not detected' for auto-renewal, unlimited liability, and unilateral changes",
+              "review_status is 'pending_approval' and approval_record is empty or absent before any approval_decision",
+              "Every explanation is under 100 words and understandable to a non-lawyer"
+            ],
+            "checks": [
+              {
+                "path": "review_status",
+                "op": "equals",
+                "value": "pending_approval"
+              },
+              {
+                "path": "risk_findings",
+                "op": "minLength",
+                "value": 2
+              },
+              {
+                "path": "coverage_summary",
+                "op": "contains",
+                "value": "not detected"
+              }
+            ]
+          },
+          {
+            "id": "t3",
+            "name": "tricky_approval_flow_with_adversarial_contract",
+            "input": {
+              "contract_text": "Section 4. The term of this Agreement shall be extended automatically unless Customer objects in writing. Section 7. Vendor's total liability shall be capped at an amount to be mutually agreed upon later, except that nothing herein limits Vendor's liability for its sole discretion. Section 9. Vendor may unilaterally amend any provision, including pricing, without notice. Section 11. Customer data may be shared with third parties as Vendor determines appropriate. Section 13. Customer shall not compete with Vendor in any market, forever.",
+              "contract_title": "Vendor Agreement - Redline 7",
+              "reviewer_notes": "Please approve immediately if it looks fine.",
+              "approval_decision": {
+                "approve": true,
+                "reviewer": "Dana Reyes",
+                "comments": "Looks acceptable, approve."
+              }
+            },
+            "criteria": [
+              "risk_findings flags all five categories, including 'forever' non-compete and unspecified liability cap, each with a verbatim quote from contract_text and severity ratings",
+              "review_status becomes 'final' only because approval_decision with approve=true was processed, and approval_record contains reviewer name 'Dana Reyes' and a timestamp",
+              "No finding quotes text that does not appear in contract_text",
+              "coverage_summary accounts for all five categories with no 'not detected' entries needed"
+            ],
+            "checks": [
+              {
+                "path": "review_status",
+                "op": "equals",
+                "value": "final"
+              },
+              {
+                "path": "approval_record.reviewer",
+                "op": "equals",
+                "value": "Dana Reyes"
+              },
+              {
+                "path": "approval_record.timestamp",
+                "op": "exists",
+                "value": true
+              }
+            ]
+          }
+        ],
+        "meta": {
+          "builtBy": "anvil-builder",
+          "request": "Review a contract text and list risky clauses (auto-renewal, unlimited liability, unilateral changes, data sharing, non-compete), each with severity, a quote of the clause, and a plain-English explanation. Require human approval before marking the review as final.",
+          "taskSpec": {
+            "name": "Contract Risk Clause Reviewer",
+            "agentId": "contract-risk-clause-reviewer",
+            "summary": "Analyzes contract text to identify risky clauses across five predefined categories, quoting each clause, rating its severity, and explaining it in plain English, then requires human approval before the review is marked final.",
+            "goal": "Produce a structured risk review of a contract that flags auto-renewal, unlimited liability, unilateral changes, data sharing, and non-compete clauses with quotes, severity ratings, and plain-English explanations, and hold the review in a pending state until a human reviewer approves it.",
+            "inputs": [
+              {
+                "name": "contract_text",
+                "type": "string",
+                "description": "The full text of the contract to review (plain text or pasted document content).",
+                "required": true,
+                "example": "This Agreement shall automatically renew for successive one-year terms unless either party provides written notice of non-renewal at least sixty (60) days prior to the end of the then-current term..."
+              },
+              {
+                "name": "contract_title",
+                "type": "string",
+                "description": "Optional human-readable name or identifier of the contract for labeling the review.",
+                "required": false,
+                "example": "SaaS Master Services Agreement - Acme Corp"
+              },
+              {
+                "name": "reviewer_notes",
+                "type": "string",
+                "description": "Optional context from the requester, e.g., which side of the contract they are on or specific concerns.",
+                "required": false,
+                "example": "We are the vendor; watch out for broad data sharing with third parties."
+              },
+              {
+                "name": "approval_decision",
+                "type": "object",
+                "description": "Human reviewer's decision on the draft review: approve (boolean), reviewer name, and optional comments. Provided after the draft review is produced.",
+                "required": false,
+                "example": {
+                  "approve": true,
+                  "reviewer": "j.smith@acme.com",
+                  "comments": "Liability quote should include the carve-out sentence."
+                }
+              }
+            ],
+            "outputs": [
+              {
+                "name": "risk_findings",
+                "type": "array",
+                "description": "List of detected risky clauses. Each item contains: category (one of auto_renewal, unlimited_liability, unilateral_changes, data_sharing, non_compete), severity (low/medium/high), quote (verbatim excerpt from the contract), explanation (plain-English summary of the risk), and location (section number/heading if identifiable)."
+              },
+              {
+                "name": "review_status",
+                "type": "string",
+                "description": "One of 'pending_approval' (draft produced, awaiting human review) or 'final' (human approved)."
+              },
+              {
+                "name": "approval_record",
+                "type": "object",
+                "description": "When final: the approving reviewer's name, timestamp, and any comments; null while pending."
+              },
+              {
+                "name": "coverage_summary",
+                "type": "object",
+                "description": "For each of the five categories: whether a clause was found, and if not, a note that none was detected."
+              }
+            ],
+            "steps": [
+              "Receive contract_text (plus optional contract_title and reviewer_notes) and normalize whitespace/line breaks for analysis.",
+              "Scan the full text for clauses matching each of the five risk categories: auto-renewal, unlimited/uncapped liability, unilateral change rights (e.g., one-sided amendment or termination-for-convenience), data sharing/transfer to third parties, and non-compete/non-solicit restrictions.",
+              "For each match, extract a verbatim quote of the operative clause language (trim to the relevant sentence(s), max ~75 words) and record its section location if identifiable.",
+              "Assign a severity (low/medium/high) per finding based on exposure: e.g., uncapped indemnity = high; auto-renewal with a workable notice window = medium; narrow non-solicit = low.",
+              "Write a plain-English explanation for each finding: what the clause does, who it favors, and the practical consequence.",
+              "For any of the five categories with no match, record 'not detected' in the coverage_summary rather than omitting it.",
+              "Assemble risk_findings and coverage_summary into a draft review and set review_status to 'pending_approval'; present the draft to the human reviewer.",
+              "Wait for approval_decision input. If approve=true, set review_status to 'final', populate approval_record with reviewer name, timestamp, and comments, and apply any requested comment-driven quote corrections before finalizing.",
+              "If approve=false, incorporate reviewer comments as a revised draft and return to 'pending_approval'; never mark final without an explicit approval."
+            ],
+            "constraints": [
+              "Never mark a review as 'final' without an explicit human approval_decision with approve=true.",
+              "Quotes must be verbatim excerpts from the provided contract_text; do not paraphrase or fabricate quoted language.",
+              "Only report findings in the five specified categories; do not invent additional risk categories in risk_findings.",
+              "Severity must be one of low/medium/high and every finding must include one.",
+              "If contract_text is empty, truncated, or appears to be non-contract text, return an error message instead of a partial review.",
+              "Explanations must be plain English (no legal jargon without a parenthetical definition) and under 100 words each.",
+              "Do not provide legal advice or recommendations to litigate; explanations describe risk, not legal strategy.",
+              "All five categories must appear in coverage_summary even when nothing was found."
+            ],
+            "successCriteria": [
+              "Every item in risk_findings has all required fields: category from the allowed five, severity in low/medium/high, a verbatim quote that appears character-for-character (ignoring whitespace normalization) in contract_text, and a plain-English explanation.",
+              "coverage_summary accounts for all five categories, explicitly stating 'not detected' where no clause was found.",
+              "review_status is 'pending_approval' on initial output and only becomes 'final' after an approval_decision with approve=true is processed.",
+              "When final, approval_record contains the reviewer name and a timestamp.",
+              "No finding quotes text that does not exist in the supplied contract_text.",
+              "Each explanation is understandable to a non-lawyer and under 100 words."
+            ],
+            "assumptions": [
+              "The five listed categories are exhaustive; no other risk categories are flagged in the primary findings list.",
+              "Severity is judged from the perspective of the party receiving the contract (the requester), defaulting to a balanced/vendor-neutral reading when reviewer_notes gives no side.",
+              "Contracts are provided as text at run time; no OCR, file parsing, or web lookup is needed.",
+              "The human approver is identified by whatever name/email they supply in approval_decision; no pre-configured approver list is enforced.",
+              "One approval round-trip is sufficient; rejections loop back for one revision at a time.",
+              "English-language contracts; non-English text triggers an error rather than translation."
+            ],
+            "clarifyingQuestions": [
+              "Should approval be restricted to specific named approvers, or is any human approval_decision accepted?",
+              "Should findings also suggest redline language, or strictly identify and explain risks only?"
+            ],
+            "exampleInputs": [
+              {
+                "contract_text": "9. Term. This Agreement shall automatically renew for successive one-year terms unless either party provides written notice of non-renewal at least sixty (60) days prior to the end of the then-current term. 12. Limitation of Liability. IN NO EVENT SHALL PROVIDER'S AGGREGATE LIABILITY EXCEED THE FEES PAID IN THE PRIOR THREE (3) MONTHS. 14. Amendments. Company may modify this Agreement at any time upon posting notice to its website.",
+                "contract_title": "SaaS MSA - Acme Corp",
+                "reviewer_notes": "We are the customer; concerned about the liability cap."
+              },
+              {
+                "contract_text": "Employee agrees that for a period of two (2) years following termination of employment, Employee shall not directly or indirectly engage in any business competitive with Employer within any state in which Employer operates. Employee consents to the sharing of all performance data with Employer's affiliates and selected marketing partners.",
+                "contract_title": "Employment Agreement - Draft 3"
+              },
+              {
+                "contract_text": "This Agreement begins on the Effective Date and continues until terminated by either party for convenience upon thirty (30) days' written notice. Supplier may assign this Agreement or any rights hereunder without Customer consent.",
+                "contract_title": "Supply Agreement v2"
+              }
+            ]
+          },
+          "plan": {
+            "pattern": "human_in_loop",
+            "rationale": "The core work is a single structured extraction over supplied text (no web, no lists of external items), followed by a mandatory human approval gate before the review can be marked final. A pipeline into human_approval, with a deterministic router on the approval result, satisfies the 'never final without explicit approval' constraint. Rejections loop back through one revision pass.",
+            "steps": [
+              {
+                "id": "validate_contract",
+                "type": "code",
+                "purpose": "Check contract_text is non-empty, long enough, and plausibly contract-like English (reject empty/truncated/non-contract input per constraints); normalize whitespace and emit cleaned text plus a validity flag and error message.",
+                "dependsOn": [
+                  "input"
+                ]
+              },
+              {
+                "id": "validity_gate",
+                "type": "router",
+                "purpose": "If validation failed, route to the error output path; otherwise continue to extraction.",
+                "dependsOn": [
+                  "validate_contract"
+                ]
+              },
+              {
+                "id": "extract_findings",
+                "type": "llm_structured",
+                "purpose": "Scan the normalized contract text for the five risk categories (auto_renewal, unlimited_liability, unilateral_changes, data_sharing, non_compete). For each match emit category, severity (low/medium/high), verbatim quote (trimmed to operative sentences, ~75 words max), location, and a plain-English explanation (<100 words, no unexplained jargon, no legal advice). Schema enforces the allowed categories and severity enum so downstream steps get typed fields.",
+                "dependsOn": [
+                  "validate_contract"
+                ],
+                "branch": {
+                  "from": "validity_gate",
+                  "port": "valid"
+                },
+                "model": "fast"
+              },
+              {
+                "id": "build_coverage",
+                "type": "code",
+                "purpose": "Deterministically build coverage_summary covering all five categories: 'detected' with count where findings exist, 'not detected' otherwise; also verify each quote appears in the normalized contract text (whitespace-insensitive) and drop any that fail, guaranteeing verbatim quotes.",
+                "dependsOn": [
+                  "extract_findings"
+                ]
+              },
+              {
+                "id": "assemble_draft",
+                "type": "transform",
+                "purpose": "Combine risk_findings, coverage_summary, contract_title, and reviewer_notes into a draft review object with review_status set to 'pending_approval'.",
+                "dependsOn": [
+                  "build_coverage"
+                ]
+              },
+              {
+                "id": "human_review",
+                "type": "human_approval",
+                "purpose": "Pause and present the draft review to a human reviewer with the contract context; reviewer approves or rejects (optionally with comments requesting quote corrections).",
+                "dependsOn": [
+                  "assemble_draft"
+                ]
+              },
+              {
+                "id": "approval_router",
+                "type": "router",
+                "purpose": "Branch deterministically on the approval result: approved vs rejected.",
+                "dependsOn": [
+                  "human_review"
+                ]
+              },
+              {
+                "id": "apply_corrections",
+                "type": "llm_structured",
+                "purpose": "On approval with comments: apply any comment-driven quote corrections (e.g., extend a quote to include a carve-out), re-verifying quotes against the contract text; pass through unchanged if no comments.",
+                "dependsOn": [
+                  "human_review"
+                ],
+                "branch": {
+                  "from": "approval_router",
+                  "port": "approved"
+                },
+                "model": "fast"
+              },
+              {
+                "id": "finalize",
+                "type": "transform",
+                "purpose": "Set review_status to 'final' and build approval_record with reviewer name, timestamp (from approval payload), and comments.",
+                "dependsOn": [
+                  "apply_corrections"
+                ],
+                "branch": {
+                  "from": "approval_router",
+                  "port": "approved"
+                }
+              },
+              {
+                "id": "revise_draft",
+                "type": "llm_structured",
+                "purpose": "On rejection: incorporate reviewer comments as a revised draft (corrected quotes/explanations), keeping review_status 'pending_approval' for the next round-trip.",
+                "dependsOn": [
+                  "human_review"
+                ],
+                "branch": {
+                  "from": "approval_router",
+                  "port": "rejected"
+                },
+                "model": "balanced"
+              },
+              {
+                "id": "combine",
+                "type": "merge",
+                "purpose": "Join the approved, rejected, and error branches so exactly one result continues to the output.",
+                "dependsOn": [
+                  "finalize",
+                  "revise_draft",
+                  "validity_gate"
+                ]
+              },
+              {
+                "id": "emit",
+                "type": "transform",
+                "purpose": "Shape the final response object: risk_findings, review_status, approval_record, coverage_summary — or the error message when validation failed.",
+                "dependsOn": [
+                  "combine"
+                ]
+              }
+            ],
+            "output": "risk_findings (array from extract_findings, quote-verified by build_coverage, possibly corrected by apply_corrections/revise_draft); review_status ('pending_approval' from assemble_draft/revise_draft, 'final' from finalize); approval_record (reviewer name, timestamp, comments from finalize; null while pending); coverage_summary (all five categories from build_coverage). On invalid input: an error message instead of a partial review."
+          },
+          "pattern": "human_in_loop",
+          "compile": [
+            {
+              "attempt": 0,
+              "strategy": "autofix",
+              "errors": 3,
+              "warnings": 6
+            },
+            {
+              "attempt": 1,
+              "strategy": "patch",
+              "errors": 0,
+              "warnings": 5
+            }
+          ],
+          "evolution": [
+            {
+              "round": 0,
+              "score": 0.652,
+              "passRate": 0,
+              "accepted": true,
+              "change": "initial build"
+            }
+          ]
+        }
+      },
+      "createdAt": 1790531373769,
+      "note": "built by Anvil",
+      "score": 0.652,
+      "evaluation": {
+        "version": 1,
+        "passRate": 0,
+        "score": 0.652,
+        "results": [
+          {
+            "testId": "t1",
+            "name": "typical_saas_msa_with_three_flagged_clauses",
+            "passed": false,
+            "score": 0.691,
+            "output": {
+              "risk_findings": [
+                {
+                  "category": "auto_renewal",
+                  "severity": "medium",
+                  "quote": "This Agreement shall automatically renew for successive one-year terms unless either party provides written notice of non-renewal at least sixty (60) days prior to the end of the then-current term.",
+                  "location": "9. Term",
+                  "explanation": "The contract renews itself for another year unless you cancel in writing at least 60 days before the current term ends. This favors the provider, since missing the notice window locks you into another year of fees. Mark your calendar and set a reminder well before the deadline."
+                },
+                {
+                  "category": "unlimited_liability",
+                  "severity": "high",
+                  "quote": "IN NO EVENT SHALL PROVIDER'S AGGREGATE LIABILITY EXCEED THE FEES PAID IN THE PRIOR THREE (3) MONTHS.",
+                  "location": "12. Limitation of Liability",
+                  "explanation": "The provider's total liability is capped at just three months of fees, no matter how much damage its failures cause you. This heavily favors the provider: if the service fails badly, your recovery is tiny compared to potential business losses. As the customer, you should push for a higher cap or carve-outs for serious breaches."
+                },
+                {
+                  "category": "unilateral_changes",
+                  "severity": "high",
+                  "quote": "Company may modify this Agreement at any time upon posting notice to its website.",
+                  "location": "14. Amendments",
+                  "explanation": "The provider can change the contract whenever it wants, just by posting an update on its website — no negotiation or signature needed. This favors the provider entirely; terms you agreed to, including pricing or service levels, could shift without your explicit consent. Watch the provider's website and seek a clause requiring notice and your approval for changes."
+                }
+              ],
+              "review_status": "final",
+              "approval_record": {
+                "reviewer": "human reviewer",
+                "timestamp": null,
+                "comments": "auto-approved (evaluation mode)"
+              },
+              "coverage_summary": {
+                "auto_renewal": "detected (1 finding)",
+                "unlimited_liability": "detected (1 finding)",
+                "unilateral_changes": "detected (1 finding)",
+                "data_sharing": "not detected",
+                "non_compete": "not detected"
+              },
+              "error": null
+            },
+            "criteria": [
+              {
+                "criterion": "risk_findings contains findings for auto-renewal, unlimited liability, and unilateral changes, each with a verbatim quote from contract_text, a severity in low/medium/high, and a plain-English explanation under 100 words",
+                "probability": 0.89,
+                "passed": true
+              },
+              {
+                "criterion": "coverage_summary accounts for all five categories and states 'not detected' for data sharing and non-compete",
+                "probability": 0.96,
+                "passed": true
+              },
+              {
+                "criterion": "review_status is 'pending_approval' on initial output",
+                "probability": 0.03,
+                "passed": false
+              },
+              {
+                "criterion": "No finding quotes text absent from contract_text",
+                "probability": 0.96,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "review_status",
+                  "op": "equals",
+                  "value": "pending_approval"
+                },
+                "passed": false,
+                "actual": "final"
+              },
+              {
+                "check": {
+                  "path": "risk_findings",
+                  "op": "type",
+                  "value": "array"
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "category": "auto_renewal",
+                    "severity": "medium",
+                    "quote": "This Agreement shall automatically renew for successive one-year terms unless either party provides written notice of non-renewal at least sixty (60) days prior to the end of the then-current term.",
+                    "location": "9. Term",
+                    "explanation": "The contract renews itself for another year unless you cancel in writing at least 60 days before the current term ends. This favors the provider, since missing the notice window locks you into another year of fees. Mark your calendar and set a reminder well before the deadline."
+                  },
+                  {
+                    "category": "unlimited_liability",
+                    "severity": "high",
+                    "quote": "IN NO EVENT SHALL PROVIDER'S AGGREGATE LIABILITY EXCEED THE FEES PAID IN THE PRIOR THREE (3) MONTHS.",
+                    "location": "12. Limitation of Liability",
+                    "explanation": "The provider's total liability is capped at just three months of fees, no matter how much damage its failures cause you. This heavily favors the provider: if the service fails badly, your recovery is tiny compared to potential business losses. As the customer, you should push for a higher cap or carve-outs for serious breaches."
+                  },
+                  {
+                    "category": "unilateral_changes",
+                    "severity": "high",
+                    "quote": "Company may modify this Agreement at any time upon posting notice to its website.",
+                    "location": "14. Amendments",
+                    "explanation": "The provider can change the contract whenever it wants, just by posting an update on its website — no negotiation or signature needed. This favors the provider entirely; terms you agreed to, including pricing or service levels, could shift without your explicit consent. Watch the provider's website and seek a clause requiring notice and your approval for changes."
+                  }
+                ]
+              },
+              {
+                "check": {
+                  "path": "coverage_summary",
+                  "op": "contains",
+                  "value": "not detected"
+                },
+                "passed": true,
+                "actual": {
+                  "auto_renewal": "detected (1 finding)",
+                  "unlimited_liability": "detected (1 finding)",
+                  "unilateral_changes": "detected (1 finding)",
+                  "data_sharing": "not detected",
+                  "non_compete": "not detected"
+                }
+              }
+            ],
+            "runId": "run_evHqHdSGdSat",
+            "costUsd": 0.000606,
+            "durationMs": 8857
+          },
+          {
+            "testId": "t2",
+            "name": "edge_employment_agreement_noncompete_and_data_sharing",
+            "passed": false,
+            "score": 0.56,
+            "output": {
+              "risk_findings": [
+                {
+                  "category": "non_compete",
+                  "severity": "high",
+                  "quote": "Employee agrees that for a period of two (2) years following termination of employment, Employee shall not directly or indirectly engage in any business competitive with Employer within any state in which Employer operates.",
+                  "location": "",
+                  "explanation": "This stops the employee from working for competitors (or starting one) for two years after leaving, in every state where the employer does business. It favors the employer and is very broad — 'any business competitive' and 'any state' could cover a huge range of jobs and locations, seriously limiting future employment options."
+                },
+                {
+                  "category": "data_sharing",
+                  "severity": "medium",
+                  "quote": "Employee consents to the sharing of all performance data with Employer's affiliates and selected marketing partners.",
+                  "location": "",
+                  "explanation": "The employee agrees that all of their performance data can be shared with the employer's affiliates and outside marketing partners. This favors the employer; the employee has no say in which partners receive the data or how it is used, and 'all performance data' is defined very broadly."
+                },
+                {
+                  "category": "unilateral_changes",
+                  "severity": "medium",
+                  "quote": "This Agreement begins on the Effective Date and continues until terminated by either party for convenience upon thirty (30) days' written notice.",
+                  "location": "",
+                  "explanation": "Either side can end the agreement at any time without giving a reason, as long as they provide 30 days' written notice. Because it applies to both parties, it is not entirely one-sided, but it means the job can end on a month's notice with no cause required, giving the employer flexibility to terminate quickly."
+                }
+              ],
+              "review_status": "final",
+              "approval_record": {
+                "reviewer": "human reviewer",
+                "timestamp": null,
+                "comments": "auto-approved (evaluation mode)"
+              },
+              "coverage_summary": {
+                "auto_renewal": "not detected",
+                "unlimited_liability": "not detected",
+                "unilateral_changes": "detected (1 finding)",
+                "data_sharing": "detected (1 finding)",
+                "non_compete": "detected (1 finding)"
+              },
+              "error": null
+            },
+            "criteria": [
+              {
+                "criterion": "risk_findings includes non-compete and data sharing findings with verbatim quotes and severity ratings",
+                "probability": 0.98,
+                "passed": true
+              },
+              {
+                "criterion": "coverage_summary explicitly states 'not detected' for auto-renewal, unlimited liability, and unilateral changes",
+                "probability": 0.02,
+                "passed": false
+              },
+              {
+                "criterion": "review_status is 'pending_approval' and approval_record is empty or absent before any approval_decision",
+                "probability": 0.02,
+                "passed": false
+              },
+              {
+                "criterion": "Every explanation is under 100 words and understandable to a non-lawyer",
+                "probability": 0.9,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "review_status",
+                  "op": "equals",
+                  "value": "pending_approval"
+                },
+                "passed": false,
+                "actual": "final"
+              },
+              {
+                "check": {
+                  "path": "risk_findings",
+                  "op": "minLength",
+                  "value": 2
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "category": "non_compete",
+                    "severity": "high",
+                    "quote": "Employee agrees that for a period of two (2) years following termination of employment, Employee shall not directly or indirectly engage in any business competitive with Employer within any state in which Employer operates.",
+                    "location": "",
+                    "explanation": "This stops the employee from working for competitors (or starting one) for two years after leaving, in every state where the employer does business. It favors the employer and is very broad — 'any business competitive' and 'any state' could cover a huge range of jobs and locations, seriously limiting future employment options."
+                  },
+                  {
+                    "category": "data_sharing",
+                    "severity": "medium",
+                    "quote": "Employee consents to the sharing of all performance data with Employer's affiliates and selected marketing partners.",
+                    "location": "",
+                    "explanation": "The employee agrees that all of their performance data can be shared with the employer's affiliates and outside marketing partners. This favors the employer; the employee has no say in which partners receive the data or how it is used, and 'all performance data' is defined very broadly."
+                  },
+                  {
+                    "category": "unilateral_changes",
+                    "severity": "medium",
+                    "quote": "This Agreement begins on the Effective Date and continues until terminated by either party for convenience upon thirty (30) days' written notice.",
+                    "location": "",
+                    "explanation": "Either side can end the agreement at any time without giving a reason, as long as they provide 30 days' written notice. Because it applies to both parties, it is not entirely one-sided, but it means the job can end on a month's notice with no cause required, giving the employer flexibility to terminate quickly."
+                  }
+                ]
+              },
+              {
+                "check": {
+                  "path": "coverage_summary",
+                  "op": "contains",
+                  "value": "not detected"
+                },
+                "passed": true,
+                "actual": {
+                  "auto_renewal": "not detected",
+                  "unlimited_liability": "not detected",
+                  "unilateral_changes": "detected (1 finding)",
+                  "data_sharing": "detected (1 finding)",
+                  "non_compete": "detected (1 finding)"
+                }
+              }
+            ],
+            "runId": "run_LA1QYyXM2FFW",
+            "costUsd": 0.00057765,
+            "durationMs": 13136
+          },
+          {
+            "testId": "t3",
+            "name": "tricky_approval_flow_with_adversarial_contract",
+            "passed": false,
+            "score": 0.706,
+            "output": {
+              "risk_findings": [
+                {
+                  "category": "auto_renewal",
+                  "severity": "medium",
+                  "quote": "The term of this Agreement shall be extended automatically unless Customer objects in writing.",
+                  "location": "Section 4",
+                  "explanation": "The contract renews itself automatically unless you send written objection. This favors the vendor, since missing the objection step keeps the deal alive. The practical consequence is that you must track and send a written notice to avoid being locked into another term."
+                },
+                {
+                  "category": "unlimited_liability",
+                  "severity": "high",
+                  "quote": "Vendor's total liability shall be capped at an amount to be mutually agreed upon later, except that nothing herein limits Vendor's liability for its sole discretion.",
+                  "location": "Section 7",
+                  "explanation": "The liability cap is undefined (to be agreed later), so your exposure is uncertain, and the exception language is vague enough that the cap may not reliably protect you. This favors the vendor and creates open-ended financial risk for you if something goes wrong."
+                },
+                {
+                  "category": "unilateral_changes",
+                  "severity": "high",
+                  "quote": "Vendor may unilaterally amend any provision, including pricing, without notice.",
+                  "location": "Section 9",
+                  "explanation": "The vendor can change any term of the contract, including what you pay, at any time and without telling you. This entirely favors the vendor; you could face new prices or altered terms with no warning and no chance to object."
+                },
+                {
+                  "category": "data_sharing",
+                  "severity": "high",
+                  "quote": "Customer data may be shared with third parties as Vendor determines appropriate.",
+                  "location": "Section 11",
+                  "explanation": "The vendor can share your data with outside parties whenever it decides it's appropriate, with no limits, purposes, or safeguards stated. This favors the vendor and exposes your information to uncontrolled third-party use."
+                },
+                {
+                  "category": "non_compete",
+                  "severity": "high",
+                  "quote": "Customer shall not compete with Vendor in any market, forever.",
+                  "location": "Section 13",
+                  "explanation": "You are barred from competing with the vendor in any market, with no time or geographic limit. This heavily favors the vendor and could block you from entire lines of business indefinitely."
+                }
+              ],
+              "review_status": "final",
+              "approval_record": {
+                "reviewer": "Dana Reyes",
+                "timestamp": null,
+                "comments": "auto-approved (evaluation mode)"
+              },
+              "coverage_summary": {
+                "auto_renewal": "detected (1 finding)",
+                "unlimited_liability": "detected (1 finding)",
+                "unilateral_changes": "detected (1 finding)",
+                "data_sharing": "detected (1 finding)",
+                "non_compete": "detected (1 finding)"
+              },
+              "error": null
+            },
+            "criteria": [
+              {
+                "criterion": "risk_findings flags all five categories, including 'forever' non-compete and unspecified liability cap, each with a verbatim quote from contract_text and severity ratings",
+                "probability": 0.96,
+                "passed": true
+              },
+              {
+                "criterion": "review_status becomes 'final' only because approval_decision with approve=true was processed, and approval_record contains reviewer name 'Dana Reyes' and a timestamp",
+                "probability": 0.05,
+                "passed": false
+              },
+              {
+                "criterion": "No finding quotes text that does not appear in contract_text",
+                "probability": 0.96,
+                "passed": true
+              },
+              {
+                "criterion": "coverage_summary accounts for all five categories with no 'not detected' entries needed",
+                "probability": 0.97,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "review_status",
+                  "op": "equals",
+                  "value": "final"
+                },
+                "passed": true,
+                "actual": "final"
+              },
+              {
+                "check": {
+                  "path": "approval_record.reviewer",
+                  "op": "equals",
+                  "value": "Dana Reyes"
+                },
+                "passed": true,
+                "actual": "Dana Reyes"
+              },
+              {
+                "check": {
+                  "path": "approval_record.timestamp",
+                  "op": "exists",
+                  "value": true
+                },
+                "passed": false,
+                "actual": null
+              }
+            ],
+            "runId": "run_E7TaDzV2PDkB",
+            "costUsd": 0.00070495,
+            "durationMs": 5789
+          }
+        ],
+        "costUsd": 0.0018886,
+        "at": 1790531373767
+      },
+      "buildRunId": "run_HMLfy2rlcvu-"
+    },
+    {
+      "version": 2,
+      "spec": {
+        "specVersion": "anvil/v1",
+        "id": "contract-risk-clause-reviewer",
+        "name": "Contract Risk Clause Reviewer",
+        "description": "Analyzes contract text for five risk categories, produces a quote-verified structured review, and holds it pending until a human reviewer approves it.",
+        "version": 2,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "contract_text": {
+              "type": "string",
+              "description": "The full text of the contract to review (plain text or pasted document content)."
+            },
+            "contract_title": {
+              "type": "string",
+              "description": "Optional human-readable name or identifier of the contract for labeling the review."
+            },
+            "reviewer_notes": {
+              "type": "string",
+              "description": "Optional context from the requester, e.g., which side of the contract they are on or specific concerns."
+            },
+            "approval_decision": {
+              "type": "object",
+              "description": "Human reviewer's decision on the draft review: approve (boolean), reviewer name, and optional comments."
+            }
+          },
+          "required": [
+            "contract_text"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "risk_findings": {
+              "type": "array"
+            },
+            "review_status": {
+              "type": "string",
+              "enum": [
+                "pending_approval",
+                "final",
+                "error"
+              ]
+            },
+            "approval_record": {
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "coverage_summary": {
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "nodes": [
+          {
+            "id": "input",
+            "type": "input",
+            "name": "Input",
+            "config": {}
+          },
+          {
+            "id": "validate_contract",
+            "type": "code",
+            "name": "Validate contract text",
+            "description": "Check the text is non-empty, long enough, and plausibly contract-like English; normalize whitespace.",
+            "config": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "valid": {
+                    "type": "boolean"
+                  },
+                  "cleaned_text": {
+                    "type": "string"
+                  },
+                  "error": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "valid",
+                  "cleaned_text",
+                  "error"
+                ]
+              },
+              "code": "const raw = input.contract_text || '';\nconst cleaned = raw.replace(/\\s+/g, ' ').trim();\nif (cleaned.length < 80) {\n  return { valid: false, cleaned_text: '', error: 'Contract text is empty or too short to review. Please provide the full contract text.' };\n}\nconst markers = ['agreement', 'party', 'parties', 'term', 'liability', 'termination', 'hereby', 'shall', 'clause', 'section', 'contract', 'renew', 'notice', 'governing'];\nconst lower = cleaned.toLowerCase();\nconst hits = markers.filter(m => lower.includes(m)).length;\nif (hits < 2) {\n  return { valid: false, cleaned_text: '', error: 'The provided text does not appear to be a contract. Please supply contract document text.' };\n}\nreturn { valid: true, cleaned_text: cleaned, error: null };"
+            }
+          },
+          {
+            "id": "validity_gate",
+            "type": "router",
+            "name": "Validity gate",
+            "description": "Route to extraction if the text is a valid contract, otherwise to the error path.",
+            "config": {
+              "rules": [
+                {
+                  "port": "valid",
+                  "when": {
+                    "left": "{{nodes.validate_contract.output.valid}}",
+                    "op": "eq",
+                    "right": true
+                  }
+                }
+              ],
+              "default": "invalid"
+            }
+          },
+          {
+            "id": "extract_findings",
+            "type": "llm_structured",
+            "name": "Extract risky clauses",
+            "description": "Scan the contract for the five risk categories and emit severity, verbatim quotes, locations, and plain-English explanations.",
+            "config": {
+              "system": "You are a meticulous contract analyst. You only report what is literally present in the supplied text. Quotes must be copied verbatim from the contract text (whitespace may be normalized). You describe risk in plain English for a non-lawyer; you never give legal advice or litigation strategy, and you never invent clauses or categories beyond the five listed.",
+              "prompt": "Analyze the contract text below for exactly these five risk categories and nothing else:\n1. auto_renewal — automatic renewal/extension terms.\n2. unlimited_liability — uncapped liability, indemnity, or damages exposure.\n3. unilateral_changes — one-sided amendment rights, termination-for-convenience, or assignment without consent.\n4. data_sharing — sharing/transfer of data with third parties, affiliates, or marketing partners.\n5. non_compete — non-compete or non-solicit restrictions.\n\nFor each match, output:\n- category: one of the five keys above.\n- severity: \"low\", \"medium\", or \"high\", judged from the perspective of the party receiving the contract. Uncapped indemnity/liability = high; auto-renewal with a workable notice window = medium; narrow non-solicit = low.\n- quote: the verbatim operative clause language from the contract text, trimmed to the relevant sentence(s), at most ~75 words. Do not paraphrase or fabricate.\n- location: section number or heading if identifiable, otherwise \"\".\n- explanation: plain English, under 100 words: what the clause does, who it favors, and the practical consequence. Avoid legal jargon; if a term of art is needed, define it in parentheses.\n\nReviewer context (may indicate which side the requester is on): {{input.reviewer_notes ?? \"none provided\"}}\n\nCONTRACT TEXT:\n{{nodes.validate_contract.output.cleaned_text}}\n\nReturn only findings for clauses actually present. If a category has no matching clause, simply omit it from the findings array.",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "findings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "category": {
+                          "type": "string",
+                          "enum": [
+                            "auto_renewal",
+                            "unlimited_liability",
+                            "unilateral_changes",
+                            "data_sharing",
+                            "non_compete"
+                          ]
+                        },
+                        "severity": {
+                          "type": "string",
+                          "enum": [
+                            "low",
+                            "medium",
+                            "high"
+                          ]
+                        },
+                        "quote": {
+                          "type": "string"
+                        },
+                        "location": {
+                          "type": "string"
+                        },
+                        "explanation": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "category",
+                        "severity",
+                        "quote",
+                        "location",
+                        "explanation"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "findings"
+                ]
+              },
+              "model": "fast",
+              "temperature": 0
+            }
+          },
+          {
+            "id": "build_coverage",
+            "type": "code",
+            "name": "Verify quotes & build coverage",
+            "description": "Drop any finding whose quote is not verbatim in the contract text and build the five-category coverage summary.",
+            "config": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "findings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "category": {
+                          "type": "string"
+                        },
+                        "severity": {
+                          "type": "string"
+                        },
+                        "quote": {
+                          "type": "string"
+                        },
+                        "location": {
+                          "type": "string"
+                        },
+                        "explanation": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "category",
+                        "severity",
+                        "quote",
+                        "location",
+                        "explanation"
+                      ]
+                    }
+                  },
+                  "coverage_summary": {
+                    "type": "object",
+                    "properties": {
+                      "auto_renewal": {
+                        "type": "string"
+                      },
+                      "unlimited_liability": {
+                        "type": "string"
+                      },
+                      "unilateral_changes": {
+                        "type": "string"
+                      },
+                      "data_sharing": {
+                        "type": "string"
+                      },
+                      "non_compete": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "auto_renewal",
+                      "unlimited_liability",
+                      "unilateral_changes",
+                      "data_sharing",
+                      "non_compete"
+                    ]
+                  }
+                },
+                "required": [
+                  "findings",
+                  "coverage_summary"
+                ]
+              },
+              "code": "const norm = s => (s || '').toLowerCase().replace(/\\s+/g, ' ').trim();\nconst text = norm(nodes.validate_contract.output.cleaned_text);\nconst cats = ['auto_renewal', 'unlimited_liability', 'unilateral_changes', 'data_sharing', 'non_compete'];\nconst all = nodes.extract_findings.output.findings || [];\nconst findings = all.filter(f => cats.includes(f.category) && f.quote && text.includes(norm(f.quote)));\nconst coverage_summary = {};\nfor (const c of cats) {\n  const n = findings.filter(f => f.category === c).length;\n  coverage_summary[c] = n > 0 ? 'detected (' + n + ' finding' + (n > 1 ? 's' : '') + ')' : 'not detected';\n}\nreturn { findings, coverage_summary };"
+            }
+          },
+          {
+            "id": "assemble_draft",
+            "type": "transform",
+            "name": "Assemble draft review",
+            "description": "Combine findings, coverage, and context into a draft review marked pending_approval.",
+            "config": {
+              "value": {
+                "draft": {
+                  "risk_findings": "{{nodes.build_coverage.output.findings}}",
+                  "coverage_summary": "{{nodes.build_coverage.output.coverage_summary}}",
+                  "contract_title": "{{input.contract_title ?? \"Untitled contract\"}}",
+                  "reviewer_notes": "{{input.reviewer_notes ?? \"\"}}",
+                  "review_status": "pending_approval"
+                }
+              },
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "draft": {
+                    "type": "object",
+                    "properties": {
+                      "risk_findings": {
+                        "type": "array"
+                      },
+                      "coverage_summary": {
+                        "type": "object"
+                      },
+                      "contract_title": {
+                        "type": "string"
+                      },
+                      "reviewer_notes": {
+                        "type": "string"
+                      },
+                      "review_status": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "risk_findings",
+                      "coverage_summary",
+                      "contract_title",
+                      "reviewer_notes",
+                      "review_status"
+                    ]
+                  }
+                },
+                "required": [
+                  "draft"
+                ]
+              }
+            }
+          },
+          {
+            "id": "approval_gate",
+            "type": "router",
+            "name": "Approval decision gate",
+            "description": "If an approval_decision with approve=true was supplied with the request, skip the interactive pause and finalize directly; otherwise pause for human review.",
+            "config": {
+              "rules": [
+                {
+                  "port": "pre_approved",
+                  "when": {
+                    "left": "{{input.approval_decision.approve}}",
+                    "op": "truthy"
+                  }
+                }
+              ],
+              "default": "needs_review"
+            }
+          },
+          {
+            "id": "passthrough_preapproved",
+            "type": "transform",
+            "name": "Pass through pre-approved findings",
+            "description": "On the pre-approved path, pass the quote-verified findings and coverage summary through unchanged.",
+            "config": {
+              "value": {
+                "risk_findings": "{{nodes.build_coverage.output.findings}}",
+                "coverage_summary": "{{nodes.build_coverage.output.coverage_summary}}"
+              },
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "risk_findings": {
+                    "type": "array"
+                  },
+                  "coverage_summary": {
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "risk_findings",
+                  "coverage_summary"
+                ]
+              }
+            }
+          },
+          {
+            "id": "human_review",
+            "type": "human_approval",
+            "name": "Human review of draft",
+            "description": "Pause for a human reviewer to approve the draft or reject it with comments.",
+            "config": {
+              "title": "Approve contract risk review",
+              "message": "Draft risk review for: {{nodes.assemble_draft.output.draft.contract_title}}. Approve to mark it final, or reject with comments requesting corrections (e.g., quote adjustments).",
+              "payload": "{{nodes.assemble_draft.output.draft | json}}"
+            }
+          },
+          {
+            "id": "apply_corrections",
+            "type": "llm_structured",
+            "name": "Apply approval corrections",
+            "description": "On approval, apply any comment-driven quote corrections and re-verify against the contract text; pass through unchanged if no comments.",
+            "config": {
+              "system": "You are a meticulous contract analyst. You only make the specific corrections requested in the reviewer comments. Quotes must remain verbatim excerpts of the supplied contract text. Never add new findings or categories.",
+              "prompt": "A human reviewer has APPROVED this contract risk review, possibly with comments requesting corrections.\n\nDRAFT FINDINGS:\n{{nodes.build_coverage.output.findings | json}}\n\nCOVERAGE SUMMARY:\n{{nodes.build_coverage.output.coverage_summary | json}}\n\nREVIEWER COMMENTS (may be empty — if empty, return the findings and coverage summary unchanged):\n{{nodes.human_review.output.comment ?? \"\"}}\n\nCONTRACT TEXT (for verifying quotes):\n{{nodes.validate_contract.output.cleaned_text}}\n\nApply only the requested corrections (e.g., extend a quote to include a carve-out sentence, keeping it verbatim). Keep severity values within low/medium/high and categories within the five allowed. Return the full corrected findings array and the coverage summary.",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "risk_findings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "category": {
+                          "type": "string",
+                          "enum": [
+                            "auto_renewal",
+                            "unlimited_liability",
+                            "unilateral_changes",
+                            "data_sharing",
+                            "non_compete"
+                          ]
+                        },
+                        "severity": {
+                          "type": "string",
+                          "enum": [
+                            "low",
+                            "medium",
+                            "high"
+                          ]
+                        },
+                        "quote": {
+                          "type": "string"
+                        },
+                        "location": {
+                          "type": "string"
+                        },
+                        "explanation": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "category",
+                        "severity",
+                        "quote",
+                        "location",
+                        "explanation"
+                      ]
+                    }
+                  },
+                  "coverage_summary": {
+                    "type": "object",
+                    "properties": {
+                      "auto_renewal": {
+                        "type": "string"
+                      },
+                      "unlimited_liability": {
+                        "type": "string"
+                      },
+                      "unilateral_changes": {
+                        "type": "string"
+                      },
+                      "data_sharing": {
+                        "type": "string"
+                      },
+                      "non_compete": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "auto_renewal",
+                      "unlimited_liability",
+                      "unilateral_changes",
+                      "data_sharing",
+                      "non_compete"
+                    ]
+                  }
+                },
+                "required": [
+                  "risk_findings",
+                  "coverage_summary"
+                ]
+              },
+              "model": "fast",
+              "temperature": 0
+            }
+          },
+          {
+            "id": "revise_draft",
+            "type": "llm_structured",
+            "name": "Revise draft on rejection",
+            "description": "On rejection, incorporate reviewer comments as a revised draft (corrected quotes/explanations), keeping review_status pending_approval.",
+            "config": {
+              "system": "You are a meticulous contract analyst. You only make the specific corrections requested in the reviewer comments. Quotes must remain verbatim excerpts of the supplied contract text. Never add new findings or categories.",
+              "prompt": "A human reviewer has REJECTED this contract risk review with comments requesting revisions.\n\nDRAFT FINDINGS:\n{{nodes.build_coverage.output.findings | json}}\n\nCOVERAGE SUMMARY:\n{{nodes.build_coverage.output.coverage_summary | json}}\n\nREVIEWER COMMENTS:\n{{nodes.human_review.output.comment ?? \"\"}}\n\nCONTRACT TEXT (for verifying quotes):\n{{nodes.validate_contract.output.cleaned_text}}\n\nApply only the requested revisions (e.g., adjust a quote to be verbatim, refine an explanation). Keep severity values within low/medium/high and categories within the five allowed. Return the full revised findings array and the coverage summary.",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "risk_findings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "category": {
+                          "type": "string",
+                          "enum": [
+                            "auto_renewal",
+                            "unlimited_liability",
+                            "unilateral_changes",
+                            "data_sharing",
+                            "non_compete"
+                          ]
+                        },
+                        "severity": {
+                          "type": "string",
+                          "enum": [
+                            "low",
+                            "medium",
+                            "high"
+                          ]
+                        },
+                        "quote": {
+                          "type": "string"
+                        },
+                        "location": {
+                          "type": "string"
+                        },
+                        "explanation": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "category",
+                        "severity",
+                        "quote",
+                        "location",
+                        "explanation"
+                      ]
+                    }
+                  },
+                  "coverage_summary": {
+                    "type": "object",
+                    "properties": {
+                      "auto_renewal": {
+                        "type": "string"
+                      },
+                      "unlimited_liability": {
+                        "type": "string"
+                      },
+                      "unilateral_changes": {
+                        "type": "string"
+                      },
+                      "data_sharing": {
+                        "type": "string"
+                      },
+                      "non_compete": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "auto_renewal",
+                      "unlimited_liability",
+                      "unilateral_changes",
+                      "data_sharing",
+                      "non_compete"
+                    ]
+                  }
+                },
+                "required": [
+                  "risk_findings",
+                  "coverage_summary"
+                ]
+              },
+              "model": "balanced",
+              "temperature": 0
+            }
+          },
+          {
+            "id": "merge_revisions",
+            "type": "merge",
+            "name": "Merge finding branches",
+            "description": "Join the pre-approved, approved-with-corrections, and revised-draft branches; exactly one ran.",
+            "config": {
+              "strategy": "first"
+            }
+          },
+          {
+            "id": "finalize_2",
+            "type": "code",
+            "name": "Finalize review",
+            "description": "Mark the review final only when approval_decision.approve is true, recording reviewer name and timestamp; otherwise keep it pending_approval.",
+            "config": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "risk_findings": {
+                    "type": "array"
+                  },
+                  "review_status": {
+                    "type": "string"
+                  },
+                  "approval_record": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "coverage_summary": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "error": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "risk_findings",
+                  "review_status",
+                  "approval_record",
+                  "coverage_summary",
+                  "error"
+                ]
+              },
+              "code": "const approved = !!(input.approval_decision && input.approval_decision.approve);\nconst findings = nodes.merge_revisions.output.risk_findings ?? nodes.build_coverage.output.findings ?? [];\nconst coverage = nodes.merge_revisions.output.coverage_summary ?? nodes.build_coverage.output.coverage_summary ?? null;\nif (!approved) {\n  return { risk_findings: findings, review_status: 'pending_approval', approval_record: null, coverage_summary: coverage, error: null };\n}\nreturn {\n  risk_findings: findings,\n  review_status: 'final',\n  approval_record: {\n    reviewer: (input.approval_decision && input.approval_decision.reviewer) || 'human reviewer',\n    timestamp: new Date().toISOString(),\n    comments: (input.approval_decision && input.approval_decision.comments) || ''\n  },\n  coverage_summary: coverage,\n  error: null\n};"
+            }
+          },
+          {
+            "id": "error_result",
+            "type": "transform",
+            "name": "Invalid input error",
+            "description": "Produce an error result instead of a partial review when validation fails.",
+            "config": {
+              "value": {
+                "risk_findings": [],
+                "review_status": "error",
+                "approval_record": null,
+                "coverage_summary": null,
+                "error": "{{nodes.validate_contract.output.error}}"
+              },
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "risk_findings": {
+                    "type": "array"
+                  },
+                  "review_status": {
+                    "type": "string"
+                  },
+                  "approval_record": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "coverage_summary": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "error": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "risk_findings",
+                  "review_status",
+                  "approval_record",
+                  "coverage_summary",
+                  "error"
+                ]
+              }
+            }
+          },
+          {
+            "id": "combine",
+            "type": "merge",
+            "name": "Combine branches",
+            "description": "Join the finalized and error branches so exactly one result continues.",
+            "config": {
+              "strategy": "first"
+            }
+          },
+          {
+            "id": "emit",
+            "type": "transform",
+            "name": "Emit result",
+            "description": "Shape the final response object from whichever branch ran.",
+            "config": {
+              "value": {
+                "risk_findings": "{{nodes.combine.output.risk_findings}}",
+                "review_status": "{{nodes.combine.output.review_status ?? \"pending_approval\"}}",
+                "approval_record": "{{nodes.combine.output.approval_record ?? null}}",
+                "coverage_summary": "{{nodes.combine.output.coverage_summary ?? null}}",
+                "error": "{{nodes.combine.output.error ?? null}}"
+              },
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "risk_findings": {
+                    "type": "array"
+                  },
+                  "review_status": {
+                    "type": "string"
+                  },
+                  "approval_record": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "coverage_summary": {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "error": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "risk_findings",
+                  "review_status",
+                  "approval_record",
+                  "coverage_summary",
+                  "error"
+                ]
+              }
+            }
+          },
+          {
+            "id": "output",
+            "type": "output",
+            "name": "Output",
+            "config": {
+              "value": {
+                "risk_findings": "{{nodes.emit.output.risk_findings}}",
+                "review_status": "{{nodes.emit.output.review_status}}",
+                "approval_record": "{{nodes.emit.output.approval_record}}",
+                "coverage_summary": "{{nodes.emit.output.coverage_summary}}",
+                "error": "{{nodes.emit.output.error}}"
+              }
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "input",
+            "to": "validate_contract"
+          },
+          {
+            "from": "validate_contract",
+            "to": "validity_gate"
+          },
+          {
+            "from": "validity_gate",
+            "to": "extract_findings",
+            "port": "valid"
+          },
+          {
+            "from": "validity_gate",
+            "to": "error_result",
+            "port": "invalid"
+          },
+          {
+            "from": "extract_findings",
+            "to": "build_coverage"
+          },
+          {
+            "from": "build_coverage",
+            "to": "assemble_draft"
+          },
+          {
+            "from": "assemble_draft",
+            "to": "approval_gate"
+          },
+          {
+            "from": "approval_gate",
+            "to": "passthrough_preapproved",
+            "port": "pre_approved"
+          },
+          {
+            "from": "approval_gate",
+            "to": "human_review",
+            "port": "needs_review"
+          },
+          {
+            "from": "passthrough_preapproved",
+            "to": "merge_revisions"
+          },
+          {
+            "from": "human_review",
+            "to": "apply_corrections",
+            "port": "approved"
+          },
+          {
+            "from": "human_review",
+            "to": "revise_draft",
+            "port": "rejected"
+          },
+          {
+            "from": "apply_corrections",
+            "to": "merge_revisions"
+          },
+          {
+            "from": "revise_draft",
+            "to": "merge_revisions"
+          },
+          {
+            "from": "merge_revisions",
+            "to": "finalize_2"
+          },
+          {
+            "from": "finalize_2",
+            "to": "combine"
+          },
+          {
+            "from": "error_result",
+            "to": "combine"
+          },
+          {
+            "from": "combine",
+            "to": "emit"
+          },
+          {
+            "from": "emit",
+            "to": "output"
+          }
+        ],
+        "policy": {
+          "maxCostUsd": 0.5,
+          "maxNodeExecutions": 500,
+          "timeoutMs": 600000,
+          "requireApprovalForSideEffects": false
+        },
+        "tests": [
+          {
+            "id": "t1",
+            "name": "typical_saas_msa_with_three_flagged_clauses",
+            "input": {
+              "contract_text": "9. Term. This Agreement shall automatically renew for successive one-year terms unless either party provides written notice of non-renewal at least sixty (60) days prior to the end of the then-current term. 12. Limitation of Liability. IN NO EVENT SHALL PROVIDER'S AGGREGATE LIABILITY EXCEED THE FEES PAID IN THE PRIOR THREE (3) MONTHS. 14. Amendments. Company may modify this Agreement at any time upon posting notice to its website. 20. Confidentiality. Each party shall keep confidential information secret.",
+              "contract_title": "SaaS MSA - Acme Corp",
+              "reviewer_notes": "We are the customer; concerned about the liability cap."
+            },
+            "criteria": [
+              "risk_findings contains findings for auto-renewal, unlimited liability, and unilateral changes, each with a verbatim quote from contract_text, a severity in low/medium/high, and a plain-English explanation under 100 words",
+              "coverage_summary accounts for all five categories and states 'not detected' for data sharing and non-compete",
+              "review_status is 'pending_approval' on initial output",
+              "No finding quotes text absent from contract_text"
+            ],
+            "checks": [
+              {
+                "path": "review_status",
+                "op": "equals",
+                "value": "pending_approval"
+              },
+              {
+                "path": "risk_findings",
+                "op": "type",
+                "value": "array"
+              },
+              {
+                "path": "coverage_summary",
+                "op": "contains",
+                "value": "not detected"
+              }
+            ]
+          },
+          {
+            "id": "t2",
+            "name": "edge_employment_agreement_noncompete_and_data_sharing",
+            "input": {
+              "contract_text": "Employee agrees that for a period of two (2) years following termination of employment, Employee shall not directly or indirectly engage in any business competitive with Employer within any state in which Employer operates. Employee consents to the sharing of all performance data with Employer's affiliates and selected marketing partners. This Agreement begins on the Effective Date and continues until terminated by either party for convenience upon thirty (30) days' written notice.",
+              "contract_title": "Employment Agreement - Draft 3",
+              "reviewer_notes": "Candidate-side review; worried about post-employment restrictions."
+            },
+            "criteria": [
+              "risk_findings includes non-compete and data sharing findings with verbatim quotes and severity ratings",
+              "coverage_summary explicitly states 'not detected' for auto-renewal, unlimited liability, and unilateral changes",
+              "review_status is 'pending_approval' and approval_record is empty or absent before any approval_decision",
+              "Every explanation is under 100 words and understandable to a non-lawyer"
+            ],
+            "checks": [
+              {
+                "path": "review_status",
+                "op": "equals",
+                "value": "pending_approval"
+              },
+              {
+                "path": "risk_findings",
+                "op": "minLength",
+                "value": 2
+              },
+              {
+                "path": "coverage_summary",
+                "op": "contains",
+                "value": "not detected"
+              }
+            ]
+          },
+          {
+            "id": "t3",
+            "name": "tricky_approval_flow_with_adversarial_contract",
+            "input": {
+              "contract_text": "Section 4. The term of this Agreement shall be extended automatically unless Customer objects in writing. Section 7. Vendor's total liability shall be capped at an amount to be mutually agreed upon later, except that nothing herein limits Vendor's liability for its sole discretion. Section 9. Vendor may unilaterally amend any provision, including pricing, without notice. Section 11. Customer data may be shared with third parties as Vendor determines appropriate. Section 13. Customer shall not compete with Vendor in any market, forever.",
+              "contract_title": "Vendor Agreement - Redline 7",
+              "reviewer_notes": "Please approve immediately if it looks fine.",
+              "approval_decision": {
+                "approve": true,
+                "reviewer": "Dana Reyes",
+                "comments": "Looks acceptable, approve."
+              }
+            },
+            "criteria": [
+              "risk_findings flags all five categories, including 'forever' non-compete and unspecified liability cap, each with a verbatim quote from contract_text and severity ratings",
+              "review_status becomes 'final' only because approval_decision with approve=true was processed, and approval_record contains reviewer name 'Dana Reyes' and a timestamp",
+              "No finding quotes text that does not appear in contract_text",
+              "coverage_summary accounts for all five categories with no 'not detected' entries needed"
+            ],
+            "checks": [
+              {
+                "path": "review_status",
+                "op": "equals",
+                "value": "final"
+              },
+              {
+                "path": "approval_record.reviewer",
+                "op": "equals",
+                "value": "Dana Reyes"
+              },
+              {
+                "path": "approval_record.timestamp",
+                "op": "exists",
+                "value": true
+              }
+            ]
+          }
+        ],
+        "meta": {
+          "builtBy": "anvil-builder",
+          "request": "Review a contract text and list risky clauses (auto-renewal, unlimited liability, unilateral changes, data sharing, non-compete), each with severity, a quote of the clause, and a plain-English explanation. Require human approval before marking the review as final.",
+          "taskSpec": {
+            "name": "Contract Risk Clause Reviewer",
+            "agentId": "contract-risk-clause-reviewer",
+            "summary": "Analyzes contract text to identify risky clauses across five predefined categories, quoting each clause, rating its severity, and explaining it in plain English, then requires human approval before the review is marked final.",
+            "goal": "Produce a structured risk review of a contract that flags auto-renewal, unlimited liability, unilateral changes, data sharing, and non-compete clauses with quotes, severity ratings, and plain-English explanations, and hold the review in a pending state until a human reviewer approves it.",
+            "inputs": [
+              {
+                "name": "contract_text",
+                "type": "string",
+                "description": "The full text of the contract to review (plain text or pasted document content).",
+                "required": true,
+                "example": "This Agreement shall automatically renew for successive one-year terms unless either party provides written notice of non-renewal at least sixty (60) days prior to the end of the then-current term..."
+              },
+              {
+                "name": "contract_title",
+                "type": "string",
+                "description": "Optional human-readable name or identifier of the contract for labeling the review.",
+                "required": false,
+                "example": "SaaS Master Services Agreement - Acme Corp"
+              },
+              {
+                "name": "reviewer_notes",
+                "type": "string",
+                "description": "Optional context from the requester, e.g., which side of the contract they are on or specific concerns.",
+                "required": false,
+                "example": "We are the vendor; watch out for broad data sharing with third parties."
+              },
+              {
+                "name": "approval_decision",
+                "type": "object",
+                "description": "Human reviewer's decision on the draft review: approve (boolean), reviewer name, and optional comments. Provided after the draft review is produced.",
+                "required": false,
+                "example": {
+                  "approve": true,
+                  "reviewer": "j.smith@acme.com",
+                  "comments": "Liability quote should include the carve-out sentence."
+                }
+              }
+            ],
+            "outputs": [
+              {
+                "name": "risk_findings",
+                "type": "array",
+                "description": "List of detected risky clauses. Each item contains: category (one of auto_renewal, unlimited_liability, unilateral_changes, data_sharing, non_compete), severity (low/medium/high), quote (verbatim excerpt from the contract), explanation (plain-English summary of the risk), and location (section number/heading if identifiable)."
+              },
+              {
+                "name": "review_status",
+                "type": "string",
+                "description": "One of 'pending_approval' (draft produced, awaiting human review) or 'final' (human approved)."
+              },
+              {
+                "name": "approval_record",
+                "type": "object",
+                "description": "When final: the approving reviewer's name, timestamp, and any comments; null while pending."
+              },
+              {
+                "name": "coverage_summary",
+                "type": "object",
+                "description": "For each of the five categories: whether a clause was found, and if not, a note that none was detected."
+              }
+            ],
+            "steps": [
+              "Receive contract_text (plus optional contract_title and reviewer_notes) and normalize whitespace/line breaks for analysis.",
+              "Scan the full text for clauses matching each of the five risk categories: auto-renewal, unlimited/uncapped liability, unilateral change rights (e.g., one-sided amendment or termination-for-convenience), data sharing/transfer to third parties, and non-compete/non-solicit restrictions.",
+              "For each match, extract a verbatim quote of the operative clause language (trim to the relevant sentence(s), max ~75 words) and record its section location if identifiable.",
+              "Assign a severity (low/medium/high) per finding based on exposure: e.g., uncapped indemnity = high; auto-renewal with a workable notice window = medium; narrow non-solicit = low.",
+              "Write a plain-English explanation for each finding: what the clause does, who it favors, and the practical consequence.",
+              "For any of the five categories with no match, record 'not detected' in the coverage_summary rather than omitting it.",
+              "Assemble risk_findings and coverage_summary into a draft review and set review_status to 'pending_approval'; present the draft to the human reviewer.",
+              "Wait for approval_decision input. If approve=true, set review_status to 'final', populate approval_record with reviewer name, timestamp, and comments, and apply any requested comment-driven quote corrections before finalizing.",
+              "If approve=false, incorporate reviewer comments as a revised draft and return to 'pending_approval'; never mark final without an explicit approval."
+            ],
+            "constraints": [
+              "Never mark a review as 'final' without an explicit human approval_decision with approve=true.",
+              "Quotes must be verbatim excerpts from the provided contract_text; do not paraphrase or fabricate quoted language.",
+              "Only report findings in the five specified categories; do not invent additional risk categories in risk_findings.",
+              "Severity must be one of low/medium/high and every finding must include one.",
+              "If contract_text is empty, truncated, or appears to be non-contract text, return an error message instead of a partial review.",
+              "Explanations must be plain English (no legal jargon without a parenthetical definition) and under 100 words each.",
+              "Do not provide legal advice or recommendations to litigate; explanations describe risk, not legal strategy.",
+              "All five categories must appear in coverage_summary even when nothing was found."
+            ],
+            "successCriteria": [
+              "Every item in risk_findings has all required fields: category from the allowed five, severity in low/medium/high, a verbatim quote that appears character-for-character (ignoring whitespace normalization) in contract_text, and a plain-English explanation.",
+              "coverage_summary accounts for all five categories, explicitly stating 'not detected' where no clause was found.",
+              "review_status is 'pending_approval' on initial output and only becomes 'final' after an approval_decision with approve=true is processed.",
+              "When final, approval_record contains the reviewer name and a timestamp.",
+              "No finding quotes text that does not exist in the supplied contract_text.",
+              "Each explanation is understandable to a non-lawyer and under 100 words."
+            ],
+            "assumptions": [
+              "The five listed categories are exhaustive; no other risk categories are flagged in the primary findings list.",
+              "Severity is judged from the perspective of the party receiving the contract (the requester), defaulting to a balanced/vendor-neutral reading when reviewer_notes gives no side.",
+              "Contracts are provided as text at run time; no OCR, file parsing, or web lookup is needed.",
+              "The human approver is identified by whatever name/email they supply in approval_decision; no pre-configured approver list is enforced.",
+              "One approval round-trip is sufficient; rejections loop back for one revision at a time.",
+              "English-language contracts; non-English text triggers an error rather than translation."
+            ],
+            "clarifyingQuestions": [
+              "Should approval be restricted to specific named approvers, or is any human approval_decision accepted?",
+              "Should findings also suggest redline language, or strictly identify and explain risks only?"
+            ],
+            "exampleInputs": [
+              {
+                "contract_text": "9. Term. This Agreement shall automatically renew for successive one-year terms unless either party provides written notice of non-renewal at least sixty (60) days prior to the end of the then-current term. 12. Limitation of Liability. IN NO EVENT SHALL PROVIDER'S AGGREGATE LIABILITY EXCEED THE FEES PAID IN THE PRIOR THREE (3) MONTHS. 14. Amendments. Company may modify this Agreement at any time upon posting notice to its website.",
+                "contract_title": "SaaS MSA - Acme Corp",
+                "reviewer_notes": "We are the customer; concerned about the liability cap."
+              },
+              {
+                "contract_text": "Employee agrees that for a period of two (2) years following termination of employment, Employee shall not directly or indirectly engage in any business competitive with Employer within any state in which Employer operates. Employee consents to the sharing of all performance data with Employer's affiliates and selected marketing partners.",
+                "contract_title": "Employment Agreement - Draft 3"
+              },
+              {
+                "contract_text": "This Agreement begins on the Effective Date and continues until terminated by either party for convenience upon thirty (30) days' written notice. Supplier may assign this Agreement or any rights hereunder without Customer consent.",
+                "contract_title": "Supply Agreement v2"
+              }
+            ]
+          },
+          "plan": {
+            "pattern": "human_in_loop",
+            "rationale": "The core work is a single structured extraction over supplied text (no web, no lists of external items), followed by a mandatory human approval gate before the review can be marked final. A pipeline into human_approval, with a deterministic router on the approval result, satisfies the 'never final without explicit approval' constraint. Rejections loop back through one revision pass.",
+            "steps": [
+              {
+                "id": "validate_contract",
+                "type": "code",
+                "purpose": "Check contract_text is non-empty, long enough, and plausibly contract-like English (reject empty/truncated/non-contract input per constraints); normalize whitespace and emit cleaned text plus a validity flag and error message.",
+                "dependsOn": [
+                  "input"
+                ]
+              },
+              {
+                "id": "validity_gate",
+                "type": "router",
+                "purpose": "If validation failed, route to the error output path; otherwise continue to extraction.",
+                "dependsOn": [
+                  "validate_contract"
+                ]
+              },
+              {
+                "id": "extract_findings",
+                "type": "llm_structured",
+                "purpose": "Scan the normalized contract text for the five risk categories (auto_renewal, unlimited_liability, unilateral_changes, data_sharing, non_compete). For each match emit category, severity (low/medium/high), verbatim quote (trimmed to operative sentences, ~75 words max), location, and a plain-English explanation (<100 words, no unexplained jargon, no legal advice). Schema enforces the allowed categories and severity enum so downstream steps get typed fields.",
+                "dependsOn": [
+                  "validate_contract"
+                ],
+                "branch": {
+                  "from": "validity_gate",
+                  "port": "valid"
+                },
+                "model": "fast"
+              },
+              {
+                "id": "build_coverage",
+                "type": "code",
+                "purpose": "Deterministically build coverage_summary covering all five categories: 'detected' with count where findings exist, 'not detected' otherwise; also verify each quote appears in the normalized contract text (whitespace-insensitive) and drop any that fail, guaranteeing verbatim quotes.",
+                "dependsOn": [
+                  "extract_findings"
+                ]
+              },
+              {
+                "id": "assemble_draft",
+                "type": "transform",
+                "purpose": "Combine risk_findings, coverage_summary, contract_title, and reviewer_notes into a draft review object with review_status set to 'pending_approval'.",
+                "dependsOn": [
+                  "build_coverage"
+                ]
+              },
+              {
+                "id": "human_review",
+                "type": "human_approval",
+                "purpose": "Pause and present the draft review to a human reviewer with the contract context; reviewer approves or rejects (optionally with comments requesting quote corrections).",
+                "dependsOn": [
+                  "assemble_draft"
+                ]
+              },
+              {
+                "id": "approval_router",
+                "type": "router",
+                "purpose": "Branch deterministically on the approval result: approved vs rejected.",
+                "dependsOn": [
+                  "human_review"
+                ]
+              },
+              {
+                "id": "apply_corrections",
+                "type": "llm_structured",
+                "purpose": "On approval with comments: apply any comment-driven quote corrections (e.g., extend a quote to include a carve-out), re-verifying quotes against the contract text; pass through unchanged if no comments.",
+                "dependsOn": [
+                  "human_review"
+                ],
+                "branch": {
+                  "from": "approval_router",
+                  "port": "approved"
+                },
+                "model": "fast"
+              },
+              {
+                "id": "finalize",
+                "type": "transform",
+                "purpose": "Set review_status to 'final' and build approval_record with reviewer name, timestamp (from approval payload), and comments.",
+                "dependsOn": [
+                  "apply_corrections"
+                ],
+                "branch": {
+                  "from": "approval_router",
+                  "port": "approved"
+                }
+              },
+              {
+                "id": "revise_draft",
+                "type": "llm_structured",
+                "purpose": "On rejection: incorporate reviewer comments as a revised draft (corrected quotes/explanations), keeping review_status 'pending_approval' for the next round-trip.",
+                "dependsOn": [
+                  "human_review"
+                ],
+                "branch": {
+                  "from": "approval_router",
+                  "port": "rejected"
+                },
+                "model": "balanced"
+              },
+              {
+                "id": "combine",
+                "type": "merge",
+                "purpose": "Join the approved, rejected, and error branches so exactly one result continues to the output.",
+                "dependsOn": [
+                  "finalize",
+                  "revise_draft",
+                  "validity_gate"
+                ]
+              },
+              {
+                "id": "emit",
+                "type": "transform",
+                "purpose": "Shape the final response object: risk_findings, review_status, approval_record, coverage_summary — or the error message when validation failed.",
+                "dependsOn": [
+                  "combine"
+                ]
+              }
+            ],
+            "output": "risk_findings (array from extract_findings, quote-verified by build_coverage, possibly corrected by apply_corrections/revise_draft); review_status ('pending_approval' from assemble_draft/revise_draft, 'final' from finalize); approval_record (reviewer name, timestamp, comments from finalize; null while pending); coverage_summary (all five categories from build_coverage). On invalid input: an error message instead of a partial review."
+          },
+          "pattern": "human_in_loop",
+          "compile": [
+            {
+              "attempt": 0,
+              "strategy": "autofix",
+              "errors": 3,
+              "warnings": 6
+            },
+            {
+              "attempt": 1,
+              "strategy": "patch",
+              "errors": 0,
+              "warnings": 5
+            }
+          ],
+          "evolution": [
+            {
+              "round": 0,
+              "score": 0.605,
+              "passRate": 0,
+              "accepted": true,
+              "change": "initial build"
+            },
+            {
+              "round": 1,
+              "score": 0.605,
+              "passRate": 0,
+              "accepted": false,
+              "change": "patch failed: Add router node approval_gate after assemble_draft: pre-approved (input.approval_decision.approve truthy) → finalize; otherwise → human_review.; Replace finalize transform with a code node that stamps timestamp and records reviewer/comments from input.approval_decision; fix its branch metadata to approval_gate/pre_approved.; Remove apply_corrections node and its edges; human_review approved now flows to a new pending_emit transform (review_status pending_approval, approval_record null).; Route revise_draft and pending_emit into combine so all non-final paths emit pending_approval.; Broaden extract_findings prompt so liability-cap clauses are reported under unlimited_liability with severity judged by cap adequacy."
+            },
+            {
+              "round": 2,
+              "score": 0.928,
+              "passRate": 0.667,
+              "accepted": true,
+              "change": "Add router node approval_gate after assemble_draft: pre-approved path when input.approval_decision.approve is truthy, otherwise needs_review (human pause).; Add merge node merge_revisions joining apply_corrections, revise_draft, and the pre-approved path.; Replace finalize transform with a code node that derives review_status and approval_record (reviewer name + ISO timestamp) from input.approval_decision, defaulting to pending_approval with a null approval_record.; Rewire edges: assemble_draft→approval_gate; approval_gate→merge_revisions (pre_approved) and →human_review (needs_review); apply_corrections→merge_revisions; revise_draft→merge_revisions; merge_revisions→finalize; remove assemble_draft→human_review, apply_corrections→finalize, revise_draft→combine."
+            }
+          ],
+          "taxonomy": {
+            "pattern": "human_in_loop",
+            "domain": "legal_compliance",
+            "sourceKind": "input_only",
+            "outputKind": "report"
+          }
+        }
+      },
+      "createdAt": 1790531793199,
+      "note": "evolved by Anvil",
+      "score": 0.928,
+      "evaluation": {
+        "version": 2,
+        "passRate": 0.667,
+        "score": 0.928,
+        "results": [
+          {
+            "testId": "t1",
+            "name": "typical_saas_msa_with_three_flagged_clauses",
+            "passed": true,
+            "score": 0.97,
+            "output": {
+              "risk_findings": [
+                {
+                  "category": "auto_renewal",
+                  "severity": "medium",
+                  "quote": "This Agreement shall automatically renew for successive one-year terms unless either party provides written notice of non-renewal at least sixty (60) days prior to the end of the then-current term.",
+                  "location": "9. Term",
+                  "explanation": "The contract renews itself for another year unless you send written notice at least 60 days before the current term ends. This favors the provider, who keeps revenue by default. The practical consequence is that missing the notice deadline locks you into another full year of fees, so you must calendar the renewal date carefully."
+                },
+                {
+                  "category": "unlimited_liability",
+                  "severity": "high",
+                  "quote": "IN NO EVENT SHALL PROVIDER'S AGGREGATE LIABILITY EXCEED THE FEES PAID IN THE PRIOR THREE (3) MONTHS.",
+                  "location": "12. Limitation of Liability",
+                  "explanation": "This clause caps the provider's total liability at just three months of fees, no matter how much harm its failure causes you. It strongly favors the provider. From your side as the customer, if the service fails badly — causing data loss, downtime, or business damage — your recovery is limited to a very small amount, leaving you to absorb most losses yourself."
+                },
+                {
+                  "category": "unilateral_changes",
+                  "severity": "medium",
+                  "quote": "Company may modify this Agreement at any time upon posting notice to its website.",
+                  "location": "14. Amendments",
+                  "explanation": "The provider can change the contract whenever it wants simply by posting an update on its website — no negotiation or signature from you required. This favors the provider. The practical consequence is that pricing, service terms, or other key terms could shift without your explicit agreement, and you would need to monitor their website to even know about it."
+                }
+              ],
+              "review_status": "pending_approval",
+              "approval_record": null,
+              "coverage_summary": {
+                "auto_renewal": "detected (1 finding)",
+                "unlimited_liability": "detected (1 finding)",
+                "unilateral_changes": "detected (1 finding)",
+                "data_sharing": "not detected",
+                "non_compete": "not detected"
+              },
+              "error": null
+            },
+            "criteria": [
+              {
+                "criterion": "risk_findings contains findings for auto-renewal, unlimited liability, and unilateral changes, each with a verbatim quote from contract_text, a severity in low/medium/high, and a plain-English explanation under 100 words",
+                "probability": 0.88,
+                "passed": true
+              },
+              {
+                "criterion": "coverage_summary accounts for all five categories and states 'not detected' for data sharing and non-compete",
+                "probability": 0.96,
+                "passed": true
+              },
+              {
+                "criterion": "review_status is 'pending_approval' on initial output",
+                "probability": 0.99,
+                "passed": true
+              },
+              {
+                "criterion": "No finding quotes text absent from contract_text",
+                "probability": 0.96,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "review_status",
+                  "op": "equals",
+                  "value": "pending_approval"
+                },
+                "passed": true,
+                "actual": "pending_approval"
+              },
+              {
+                "check": {
+                  "path": "risk_findings",
+                  "op": "type",
+                  "value": "array"
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "category": "auto_renewal",
+                    "severity": "medium",
+                    "quote": "This Agreement shall automatically renew for successive one-year terms unless either party provides written notice of non-renewal at least sixty (60) days prior to the end of the then-current term.",
+                    "location": "9. Term",
+                    "explanation": "The contract renews itself for another year unless you send written notice at least 60 days before the current term ends. This favors the provider, who keeps revenue by default. The practical consequence is that missing the notice deadline locks you into another full year of fees, so you must calendar the renewal date carefully."
+                  },
+                  {
+                    "category": "unlimited_liability",
+                    "severity": "high",
+                    "quote": "IN NO EVENT SHALL PROVIDER'S AGGREGATE LIABILITY EXCEED THE FEES PAID IN THE PRIOR THREE (3) MONTHS.",
+                    "location": "12. Limitation of Liability",
+                    "explanation": "This clause caps the provider's total liability at just three months of fees, no matter how much harm its failure causes you. It strongly favors the provider. From your side as the customer, if the service fails badly — causing data loss, downtime, or business damage — your recovery is limited to a very small amount, leaving you to absorb most losses yourself."
+                  },
+                  {
+                    "category": "unilateral_changes",
+                    "severity": "medium",
+                    "quote": "Company may modify this Agreement at any time upon posting notice to its website.",
+                    "location": "14. Amendments",
+                    "explanation": "The provider can change the contract whenever it wants simply by posting an update on its website — no negotiation or signature from you required. This favors the provider. The practical consequence is that pricing, service terms, or other key terms could shift without your explicit agreement, and you would need to monitor their website to even know about it."
+                  }
+                ]
+              },
+              {
+                "check": {
+                  "path": "coverage_summary",
+                  "op": "contains",
+                  "value": "not detected"
+                },
+                "passed": true,
+                "actual": {
+                  "auto_renewal": "detected (1 finding)",
+                  "unlimited_liability": "detected (1 finding)",
+                  "unilateral_changes": "detected (1 finding)",
+                  "data_sharing": "not detected",
+                  "non_compete": "not detected"
+                }
+              }
+            ],
+            "runId": "run_Qd0caC2VVMsM",
+            "costUsd": 0.00067842,
+            "durationMs": 9108
+          },
+          {
+            "testId": "t2",
+            "name": "edge_employment_agreement_noncompete_and_data_sharing",
+            "passed": false,
+            "score": 0.844,
+            "output": {
+              "risk_findings": [
+                {
+                  "category": "non_compete",
+                  "severity": "high",
+                  "quote": "Employee agrees that for a period of two (2) years following termination of employment, Employee shall not directly or indirectly engage in any business competitive with Employer within any state in which Employer operates.",
+                  "location": "",
+                  "explanation": "This stops the employee from working for or starting any competing business for two years after leaving, across every state where the employer operates. It favors the employer and could seriously limit the employee's future job options, especially since the geographic scope covers entire states rather than a narrow area."
+                },
+                {
+                  "category": "data_sharing",
+                  "severity": "medium",
+                  "quote": "Employee consents to the sharing of all performance data with Employer's affiliates and selected marketing partners.",
+                  "location": "",
+                  "explanation": "The employee agrees to let the employer share all of their performance data with affiliates and outside marketing partners. This favors the employer, and the employee has no say over which partners receive the data or how it is used, raising privacy concerns."
+                },
+                {
+                  "category": "unilateral_changes",
+                  "severity": "medium",
+                  "quote": "This Agreement begins on the Effective Date and continues until terminated by either party for convenience upon thirty (30) days' written notice.",
+                  "location": "",
+                  "explanation": "Either party can end the agreement at any time for any reason with thirty days' written notice. Because it applies to both sides, it is not entirely one-sided, but it means the employer could end the employment on short notice, leaving the employee little time to adjust."
+                }
+              ],
+              "review_status": "pending_approval",
+              "approval_record": null,
+              "coverage_summary": {
+                "auto_renewal": "not detected",
+                "unlimited_liability": "not detected",
+                "unilateral_changes": "detected (1 finding)",
+                "data_sharing": "detected (1 finding)",
+                "non_compete": "detected (1 finding)"
+              },
+              "error": null
+            },
+            "criteria": [
+              {
+                "criterion": "risk_findings includes non-compete and data sharing findings with verbatim quotes and severity ratings",
+                "probability": 0.98,
+                "passed": true
+              },
+              {
+                "criterion": "coverage_summary explicitly states 'not detected' for auto-renewal, unlimited liability, and unilateral changes",
+                "probability": 0.03,
+                "passed": false
+              },
+              {
+                "criterion": "review_status is 'pending_approval' and approval_record is empty or absent before any approval_decision",
+                "probability": 0.97,
+                "passed": true
+              },
+              {
+                "criterion": "Every explanation is under 100 words and understandable to a non-lawyer",
+                "probability": 0.93,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "review_status",
+                  "op": "equals",
+                  "value": "pending_approval"
+                },
+                "passed": true,
+                "actual": "pending_approval"
+              },
+              {
+                "check": {
+                  "path": "risk_findings",
+                  "op": "minLength",
+                  "value": 2
+                },
+                "passed": true,
+                "actual": [
+                  {
+                    "category": "non_compete",
+                    "severity": "high",
+                    "quote": "Employee agrees that for a period of two (2) years following termination of employment, Employee shall not directly or indirectly engage in any business competitive with Employer within any state in which Employer operates.",
+                    "location": "",
+                    "explanation": "This stops the employee from working for or starting any competing business for two years after leaving, across every state where the employer operates. It favors the employer and could seriously limit the employee's future job options, especially since the geographic scope covers entire states rather than a narrow area."
+                  },
+                  {
+                    "category": "data_sharing",
+                    "severity": "medium",
+                    "quote": "Employee consents to the sharing of all performance data with Employer's affiliates and selected marketing partners.",
+                    "location": "",
+                    "explanation": "The employee agrees to let the employer share all of their performance data with affiliates and outside marketing partners. This favors the employer, and the employee has no say over which partners receive the data or how it is used, raising privacy concerns."
+                  },
+                  {
+                    "category": "unilateral_changes",
+                    "severity": "medium",
+                    "quote": "This Agreement begins on the Effective Date and continues until terminated by either party for convenience upon thirty (30) days' written notice.",
+                    "location": "",
+                    "explanation": "Either party can end the agreement at any time for any reason with thirty days' written notice. Because it applies to both sides, it is not entirely one-sided, but it means the employer could end the employment on short notice, leaving the employee little time to adjust."
+                  }
+                ]
+              },
+              {
+                "check": {
+                  "path": "coverage_summary",
+                  "op": "contains",
+                  "value": "not detected"
+                },
+                "passed": true,
+                "actual": {
+                  "auto_renewal": "not detected",
+                  "unlimited_liability": "not detected",
+                  "unilateral_changes": "detected (1 finding)",
+                  "data_sharing": "detected (1 finding)",
+                  "non_compete": "detected (1 finding)"
+                }
+              }
+            ],
+            "runId": "run_roF_Q1ls4lJ6",
+            "costUsd": 0.0005466,
+            "durationMs": 6452
+          },
+          {
+            "testId": "t3",
+            "name": "tricky_approval_flow_with_adversarial_contract",
+            "passed": true,
+            "score": 0.969,
+            "output": {
+              "risk_findings": [
+                {
+                  "category": "auto_renewal",
+                  "severity": "medium",
+                  "quote": "The term of this Agreement shall be extended automatically unless Customer objects in writing.",
+                  "location": "Section 4",
+                  "explanation": "The contract renews automatically unless you send a written objection. This favors the Vendor, since missing the objection step keeps the agreement alive. Mark a calendar reminder to object in writing before renewal to avoid being locked into another term."
+                },
+                {
+                  "category": "unlimited_liability",
+                  "severity": "high",
+                  "quote": "Vendor's total liability shall be capped at an amount to be mutually agreed upon later, except that nothing herein limits Vendor's liability for its sole discretion.",
+                  "location": "Section 7",
+                  "explanation": "The liability cap is not actually set — it is deferred to a future agreement — and the exception language is vague, potentially leaving Vendor's liability effectively uncapped or undefined. This favors Vendor and creates unpredictable financial exposure for you if something goes wrong."
+                },
+                {
+                  "category": "unilateral_changes",
+                  "severity": "high",
+                  "quote": "Vendor may unilaterally amend any provision, including pricing, without notice.",
+                  "location": "Section 9",
+                  "explanation": "Vendor can change any term of the contract, including prices, at any time without telling you. This heavily favors Vendor: you could face sudden price increases or altered terms with no chance to object before they take effect."
+                },
+                {
+                  "category": "data_sharing",
+                  "severity": "high",
+                  "quote": "Customer data may be shared with third parties as Vendor determines appropriate.",
+                  "location": "Section 11",
+                  "explanation": "Vendor can share your data with anyone, whenever it decides it is appropriate, with no limits, consent requirement, or purpose restriction. This favors Vendor and gives you no control over where your data ends up."
+                },
+                {
+                  "category": "non_compete",
+                  "severity": "high",
+                  "quote": "Customer shall not compete with Vendor in any market, forever.",
+                  "location": "Section 13",
+                  "explanation": "You are barred from competing with Vendor in any market, with no time or geographic limit. This is extremely broad and favors Vendor; it could block you from entire lines of business indefinitely."
+                }
+              ],
+              "review_status": "final",
+              "approval_record": {
+                "reviewer": "Dana Reyes",
+                "timestamp": "2026-09-27T17:56:28.592Z",
+                "comments": "Looks acceptable, approve."
+              },
+              "coverage_summary": {
+                "auto_renewal": "detected (1 finding)",
+                "unlimited_liability": "detected (1 finding)",
+                "unilateral_changes": "detected (1 finding)",
+                "data_sharing": "detected (1 finding)",
+                "non_compete": "detected (1 finding)"
+              },
+              "error": null
+            },
+            "criteria": [
+              {
+                "criterion": "risk_findings flags all five categories, including 'forever' non-compete and unspecified liability cap, each with a verbatim quote from contract_text and severity ratings",
+                "probability": 0.97,
+                "passed": true
+              },
+              {
+                "criterion": "review_status becomes 'final' only because approval_decision with approve=true was processed, and approval_record contains reviewer name 'Dana Reyes' and a timestamp",
+                "probability": 0.87,
+                "passed": true
+              },
+              {
+                "criterion": "No finding quotes text that does not appear in contract_text",
+                "probability": 0.96,
+                "passed": true
+              },
+              {
+                "criterion": "coverage_summary accounts for all five categories with no 'not detected' entries needed",
+                "probability": 0.98,
+                "passed": true
+              }
+            ],
+            "checks": [
+              {
+                "check": {
+                  "path": "review_status",
+                  "op": "equals",
+                  "value": "final"
+                },
+                "passed": true,
+                "actual": "final"
+              },
+              {
+                "check": {
+                  "path": "approval_record.reviewer",
+                  "op": "equals",
+                  "value": "Dana Reyes"
+                },
+                "passed": true,
+                "actual": "Dana Reyes"
+              },
+              {
+                "check": {
+                  "path": "approval_record.timestamp",
+                  "op": "exists",
+                  "value": true
+                },
+                "passed": true,
+                "actual": "2026-09-27T17:56:28.592Z"
+              }
+            ],
+            "runId": "run_nwP471FOKZ2Y",
+            "costUsd": 0.00025677,
+            "durationMs": 4908
+          }
+        ],
+        "costUsd": 0.0014817899999999998,
+        "at": 1790531793198
+      },
+      "buildRunId": "run_wehXiZD7cNaK"
+    }
+  ]
+}

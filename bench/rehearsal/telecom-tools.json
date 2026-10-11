@@ -1,0 +1,28 @@
+{
+  "tools": [
+    {
+      "name": "list_plans",
+      "description": "Gives all mobile plans: plan_id, name, data_gb, price_usd_per_month.",
+      "parameters": { "type": "object", "properties": {} },
+      "sideEffects": false,
+      "adapter": "mock",
+      "mock": "return [ { plan_id: 'P-LITE', name: 'Lite', data_gb: 5, price_usd_per_month: 15 }, { plan_id: 'P-PLUS', name: 'Plus', data_gb: 25, price_usd_per_month: 30 }, { plan_id: 'P-MAX', name: 'Max', data_gb: 100, price_usd_per_month: 55 } ];"
+    },
+    {
+      "name": "get_account",
+      "description": "Gives the account of a phone number: phone, owner, plan_id, contract (none or 24_months), contract_months_left, days_left_in_cycle.",
+      "parameters": { "type": "object", "properties": { "phone": { "type": "string" } }, "required": ["phone"] },
+      "sideEffects": false,
+      "adapter": "mock",
+      "mock": "const db = state.accounts || (state.accounts = { '555-0101': { phone: '555-0101', owner: 'Ivy Chen', plan_id: 'P-PLUS', contract: 'none', contract_months_left: 0, days_left_in_cycle: 10 }, '555-0202': { phone: '555-0202', owner: 'Ben Okafor', plan_id: 'P-MAX', contract: '24_months', contract_months_left: 8, days_left_in_cycle: 20 } }); return db[String(args.phone)] || { error: 'no account for this phone number' };"
+    },
+    {
+      "name": "change_plan",
+      "description": "Changes the plan of an account from the next day. Gives ok, or an error.",
+      "parameters": { "type": "object", "properties": { "phone": { "type": "string" }, "plan_id": { "type": "string" } }, "required": ["phone", "plan_id"] },
+      "sideEffects": true,
+      "adapter": "mock",
+      "mock": "const a = (state.accounts || {})[String(args.phone)]; if (!a) return { error: 'no account for this phone number (get it first)' }; if (!['P-LITE','P-PLUS','P-MAX'].includes(args.plan_id)) return { error: 'no plan with this id' }; if (a.plan_id === args.plan_id) return { error: 'the account already has this plan' }; a.plan_id = args.plan_id; return { ok: true, phone: a.phone, plan_id: a.plan_id };"
+    }
+  ]
+}

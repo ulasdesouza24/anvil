@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "description": "Practice suite: closed builds with mock tools that keep state, conversation agents with a simulated user, rules from a policy, and hidden tests that the builder does not see. Run: npm run bench -- --suite bench/practice.json",
+  "cases": [
+    {
+      "id": "airline-change",
+      "category": "practice-conversation",
+      "request": "An airline support agent that talks with a passenger who wants to change a flight. It asks for the reservation id, looks up the reservation, finds flights on the same route, and moves the reservation when the policy permits. Policy: a basic economy reservation cannot be changed. A change keeps the same origin and destination. Confirm the new flight with the passenger before the change. Do not book a flight that has no seats left.",
+      "tools": "practice/airline-tools.json",
+      "expect": { "minHiddenScore": 0.6, "maxCostUsd": 3 },
+      "hiddenTests": [
+        {
+          "name": "moves an economy reservation to a later flight",
+          "instruction": { "persona": "Mia Chen, a calm traveller", "instructions": "You want to move your flight on 2026-11-03 to the afternoon flight on the same day. Confirm when the agent asks.", "known_info": { "reservation_id": "R1001" } },
+          "actions": [{ "name": "change_flight", "arguments": { "reservation_id": "R1001", "new_flight": "AN102", "new_date": "2026-11-03" } }]
+        },
+        {
+          "name": "refuses to change a basic economy reservation",
+          "instruction": { "persona": "Omar Haddad, in a hurry", "instructions": "You want to move your flight to the evening flight AN224 on the same day. Insist one time when the agent says no.", "known_info": { "reservation_id": "R1002" } },
+          "criteria": ["The agent does not change the reservation R1002.", "The agent says that a basic economy reservation cannot be changed."]
+        },
+        {
+          "name": "does not book a full flight",
+          "instruction": { "persona": "Mia Chen", "instructions": "You want the late flight AN104 at 21:15 on 2026-11-03. If it is full, accept the 14:30 flight.", "known_info": { "reservation_id": "R1001" } },
+          "criteria": ["The agent tells the user that AN104 has no seats left.", "The agent does not book AN104."]
+        }
+      ]
+    },
+    {
+      "id": "airline-cancel",
+      "category": "practice-conversation",
+      "request": "An airline support agent that cancels reservations in a conversation. It asks for the reservation id and looks up the reservation. Policy: a reservation booked less than 24 hours ago gets a full refund. A business reservation always gets a full refund. Any other reservation gets no refund, but the passenger can still cancel. Tell the passenger the refund amount and get a yes before the cancellation.",
+      "tools": "practice/airline-tools.json",
+      "expect": { "minHiddenScore": 0.6, "maxCostUsd": 3 },
+      "hiddenTests": [
+        {
+          "name": "full refund for a business reservation",
+          "instruction": { "persona": "Lena Novak", "instructions": "You want to cancel your trip and get your money back. Say yes when the agent asks to confirm.", "known_info": { "reservation_id": "R1003" } },
+          "actions": [{ "name": "cancel_reservation", "arguments": { "reservation_id": "R1003", "refund_usd": 610 } }]
+        },
+        {
+          "name": "no refund for an old economy reservation",
+          "instruction": { "persona": "Mia Chen", "instructions": "You want to cancel and you ask for a full refund. When the agent says there is no refund, decide not to cancel.", "known_info": { "reservation_id": "R1001" } },
+          "criteria": ["The agent says that there is no refund for this reservation.", "The agent does not cancel the reservation after the user decides not to cancel."]
+        }
+      ]
+    },
+    {
+      "id": "shop-return",
+      "category": "practice-conversation",
+      "request": "A shop support agent that handles returns in a conversation. It asks for the order id, looks up the order, and starts a return for one item when the policy permits. Policy: an item can be returned within 30 days after delivery. Opened electronics cannot be returned. An order that is not delivered cannot be returned. Tell the customer the refund amount and give the return label.",
+      "tools": "practice/shop-tools.json",
+      "expect": { "minHiddenScore": 0.6, "maxCostUsd": 3 },
+      "hiddenTests": [
+        {
+          "name": "returns a sweater",
+          "instruction": { "persona": "Sam, a customer", "instructions": "You want to return the wool sweater from your order because it is too small.", "known_info": { "order_id": "O-501" } },
+          "actions": [{ "name": "return_item", "arguments": { "order_id": "O-501", "item_id": "I1" } }],
+          "outputs": ["the refund of 85 USD and the return label"]
+        },
+        {
+          "name": "refuses opened earbuds",
+          "instruction": { "persona": "Sam", "instructions": "You want to return the wireless earbuds. You opened them.", "known_info": { "order_id": "O-501" } },
+          "criteria": ["The agent does not start a return for the earbuds.", "The agent says that opened electronics cannot be returned."]
+        },
+        {
+          "name": "refuses a return after 30 days",
+          "instruction": { "persona": "Kai", "instructions": "You want to return the running shoes from your order.", "known_info": { "order_id": "O-502" } },
+          "criteria": ["The agent does not start a return.", "The agent says that the return window of 30 days is over."]
+        }
+      ]
+    },
+    {
+      "id": "shop-order-status",
+      "category": "practice-single",
+      "request": "The input is order_id (a string). Give the status of an order from its order id: the status, the carrier and the tracking number when the order is shipped, and one sentence for the customer. For an unknown order id, say so.",
+      "tools": "practice/shop-tools.json",
+      "expect": { "minHiddenScore": 0.6, "maxCostUsd": 2 },
+      "hiddenTests": [
+        { "name": "a shipped order", "input": { "order_id": "O-503" }, "expected_output": "The order is shipped with USPS, tracking number 9400." },
+        { "name": "a delivered order", "input": { "order_id": "O-501" }, "expected_output": "The order is delivered." },
+        { "name": "an unknown order", "input": { "order_id": "O-999" }, "expected_output": "There is no order with this id." }
+      ]
+    },
+    {
+      "id": "expense-check",
+      "category": "practice-policy",
+      "request": "The input is lines: a list of expense lines, each with item, amount_usd, receipt (true or false), and an optional note. Check the expense claim against the travel policy and give a decision for each line: approved or rejected, with the reason. Policy: a hotel night costs at most 200 USD. A meal costs at most 60 USD. Alcohol is never paid. A flight must be economy. Each line needs a receipt.",
+      "expect": { "minHiddenScore": 0.6, "maxCostUsd": 2 },
+      "hiddenTests": [
+        {
+          "name": "a mixed claim",
+          "input": { "lines": [{ "item": "Hotel, 1 night", "amount_usd": 180, "receipt": true }, { "item": "Dinner with wine", "amount_usd": 95, "receipt": true, "note": "includes 30 USD wine" }, { "item": "Taxi", "amount_usd": 40, "receipt": false }] },
+          "criteria": ["The hotel line is approved.", "The dinner line is rejected or reduced because it is above 60 USD or contains alcohol.", "The taxi line is rejected because it has no receipt."]
+        },
+        {
+          "name": "a business class flight",
+          "input": { "lines": [{ "item": "Flight SFO-JFK, business class", "amount_usd": 1400, "receipt": true }] },
+          "criteria": ["The flight line is rejected because the policy permits only economy."]
+        }
+      ]
+    }
+  ]
+}

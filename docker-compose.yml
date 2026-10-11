@@ -1,0 +1,36 @@
+# docker compose up --build → Anvil on http://127.0.0.1:8787.
+# Put OPENROUTER_API_KEY (and ANVIL_API_TOKEN) in .env first.
+services:
+  # Builds the image of the Python sandbox. The anvil service starts its containers.
+  sandbox-image:
+    build: ./sandbox
+    image: anvil-sandbox:py312
+    entrypoint: ["true"]
+    restart: "no"
+
+  anvil:
+    build: .
+    image: anvil:latest
+    depends_on:
+      sandbox-image:
+        condition: service_completed_successfully
+    env_file: .env
+    # An init process gives SIGTERM to the server, and collects dead processes.
+    init: true
+    stop_grace_period: 30s
+    environment:
+      ANVIL_HOST: 0.0.0.0
+      ANVIL_GATE_BIND: 0.0.0.0
+      ANVIL_DATA_DIR: /data
+    ports:
+      # Only this machine can reach the server and the package gate. Set ANVIL_API_TOKEN before you open it to a network.
+      - "127.0.0.1:8787:8787"
+      - "127.0.0.1:3141:3141"
+    volumes:
+      - anvil-data:/data
+      - ./tasks:/tasks
+      # The sandbox containers run on the Docker of the host.
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  anvil-data: {}
