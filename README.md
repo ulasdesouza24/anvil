@@ -13,13 +13,16 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-f97316?style=flat-square" alt="License: Apache-2.0"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D22-3c873a?style=flat-square&logo=node.js&logoColor=white" alt="Node 22 or later">
   <img src="https://img.shields.io/badge/TypeScript-strict-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript">
-  <img src="https://img.shields.io/badge/tests-424%20passing-34d399?style=flat-square" alt="424 tests pass">
+  <img src="https://img.shields.io/badge/tests-447%20passing-34d399?style=flat-square" alt="447 tests pass">
   <img src="https://img.shields.io/badge/MCP-server%20%2B%20client-a78bfa?style=flat-square" alt="MCP server and client">
+  <a href="https://anvil-alpha-ashen.vercel.app"><img src="https://img.shields.io/badge/live-anvil--alpha--ashen.vercel.app-f97316?style=flat-square&logo=vercel&logoColor=white" alt="Live site"></a>
 </p>
 
 **Anvil is an agent that builds agents.** You describe a process in plain language. Anvil designs an agent for it, compiles it, writes tests for it, runs the tests, fixes the agent until the tests pass, and serves the agent as an API endpoint and an MCP tool.
 
 An Anvil agent is not a long prompt. It is a typed JSON workflow of **node classes**, like an n8n workflow that an AI writes. A compiler checks each workflow before it runs. The builder itself is an Anvil agent, in the same JSON format, on the same engine.
+
+You can also open each agent on an **n8n-style canvas**: drag steps, connect them, test them in a dry run, and ask the AI assistant for a change. The AI and you edit the same graph. Share a good agent in the **Agent Bazaar**, and other users add a copy with one click.
 
 ```text
 "Score inbound leads 0-100, draft a reply to hot leads, and tag cold leads for nurture."
@@ -48,11 +51,13 @@ An Anvil agent is not a long prompt. It is a typed JSON workflow of **node class
 12. [The Python sandbox](#the-python-sandbox)
 13. [Autonomy: triggers, health checks, and feedback](#autonomy-triggers-health-checks-and-feedback)
 14. [MCP in both directions](#mcp-in-both-directions)
-15. [Use Anvil: UI, CLI, HTTP API, Docker](#use-anvil-ui-cli-http-api-docker)
-16. [Configuration](#configuration)
-17. [Project layout](#project-layout)
-18. [FAQ](#faq)
-19. [License](#license)
+15. [The workflow editor](#the-workflow-editor)
+16. [Hosted mode, settings, and the Agent Bazaar](#hosted-mode-settings-and-the-agent-bazaar)
+17. [Use Anvil: UI, CLI, HTTP API, Docker](#use-anvil-ui-cli-http-api-docker)
+18. [Configuration](#configuration)
+19. [Project layout](#project-layout)
+20. [FAQ](#faq)
+21. [License](#license)
 
 ## Quickstart
 
@@ -407,6 +412,35 @@ An event that arrives while a run of its trigger is active waits in a queue on d
 claude mcp add --transport http anvil http://127.0.0.1:8787/mcp
 ```
 
+## The workflow editor
+
+<p align="center">
+  <img src="assets/workflow-editor.svg" alt="The AI builds a workflow from one sentence. A person drags an HTTP step from the palette, tests the workflow in a dry run, and accepts a human approval step that the assistant proposes. The locked reply step stays. The draft is saved as version 4." width="100%">
+</p>
+
+Build an agent with AI, then change it by hand like an n8n workflow. The editor is at `/agents/:id/workflow`, or click **New workflow** to start from a blank canvas. See [docs/WORKFLOW_EDITOR.md](docs/WORKFLOW_EDITOR.md).
+
+| Feature | What it does |
+|---|---|
+| Canvas | Drag steps from the class library, connect ports, drop a step on an edge, pan, box-select, copy and paste, undo and redo, sticky notes. |
+| Step panel | Input, Parameters, and Output of each step. Each field has a Fixed or an Expression mode with `{{ }}` autocompletion from the data of earlier steps. |
+| Test | A test run is a **dry run** by default: an action with a side effect gives a preview and sends nothing. **Execute step** runs one step with the data of the last run. **Run to here** runs the steps before it. Pin data to a step to skip it. |
+| Triggers on the canvas | Schedule (with a cron builder), webhook (with a test listener), poll, and agent triggers are steps on the canvas. |
+| AI assistant | Write a change in plain language (`Ctrl/Cmd+K`). The assistant gives a proposal as a diff on the canvas. Accept it or reject it. |
+| Locked steps | The assistant, refine, and evolve never change a locked step. |
+| Versions | A save makes a new version only when the compiler gives zero errors. Compare two versions on the canvas. When the agent changed after the draft started, a three-way merge keeps both changes. |
+| Disable and notes | Disable a step without a delete, and add a note for the next person. |
+
+## Hosted mode, settings, and the Agent Bazaar
+
+With `ANVIL_HOSTED=on`, Anvil is a public site for many users. The live site is [anvil-alpha-ashen.vercel.app](https://anvil-alpha-ashen.vercel.app). See [docs/HOSTING.md](docs/HOSTING.md) and [docs/BAZAAR.md](docs/BAZAAR.md).
+
+- **Accounts.** Each user signs up with a username and gets an own workspace: agents, versions, drafts, runs, classes, secrets, files, triggers, and settings. A user can delete the account and all its data.
+- **Your own key.** Each user builds and runs with an own OpenRouter key. The key is encrypted on disk, and the API shows only its last 4 characters.
+- **Settings.** The Settings page shows each value that a user can change: the System 2 model, the model tiers, the best-of-N builder models and margin, the System 1 thresholds, budgets, time limits, and the library. The System 1 model (Jev) is fixed.
+- **Agent Bazaar.** Share an agent under your username. Other users see its graph, its input fields, and its classes, and add a copy to their own agents with one click. The copy runs with their own key. Its triggers start off, and its side-effect classes start unapproved.
+- **Isolation.** Code steps run in QuickJS (WebAssembly). Python runs in gVisor containers with no network, through a Docker guard that allows only sandbox containers. The browser runs in its own gVisor container behind a guarded proxy. A connect-time guard blocks each request to the private network and the cloud metadata address.
+
 ## Use Anvil: UI, CLI, HTTP API, Docker
 
 ### The UI
@@ -426,6 +460,9 @@ claude mcp add --transport http anvil http://127.0.0.1:8787/mcp
 | Connections | Connect MCP servers, expose Anvil to MCP clients, enter secrets and host headers, and see the sandbox status. |
 | Benchmark | See benchmark reports: met tasks, mean score, hidden tests, cost, and tokens for each step. |
 | Usage | See cost and calls, split by System 1 and System 2. |
+| Workflow editor | Edit an agent on a canvas, test it in a dry run, ask the assistant for a change, and save a version. |
+| Agent Bazaar | Share your agents, and add the agents of other users. |
+| Settings | Your OpenRouter key, your models, thresholds, budgets, and limits, and your account. |
 
 ### CLI
 
