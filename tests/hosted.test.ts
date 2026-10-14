@@ -174,6 +174,32 @@ describe("hosted: workspaces", () => {
   });
 });
 
+describe("hosted: account deletion", () => {
+  it("needs the password, frees the username, ends the sessions, and closes the workspace", async () => {
+    const dir = tmpDir();
+    const accounts = new AccountService(dir, SESSION, KEY).load();
+    const { account, token } = accounts.register("gone", "password123");
+    const wm = new WorkspaceManager(
+      { ...loadConfig(), hosted: true, dataDir: dir },
+      { settings: accounts.settingsStore(), accounts, secretsKey: KEY, createOptions: { client: new FakeClient() }, log: () => undefined },
+    );
+    const w = await wm.user(account.id);
+    await w.anvil.store.saveVersion(echoSpec("mine"), { note: "t" });
+    const bazaar = new Bazaar(dir, (id) => accounts.get(id)?.username ?? "?").load();
+    bazaar.share(account.id, w.anvil, { agentId: "mine" });
+    expect(() => accounts.remove(account.id, "wrong-password")).toThrow(/wrong/);
+    await wm.close(account.id);
+    bazaar.removeOwner(account.id);
+    fs.rmSync(accounts.userDir(account.id), { recursive: true, force: true });
+    accounts.remove(account.id, "password123");
+    expect(accounts.verify(token)).toBeUndefined();
+    expect(fs.existsSync(accounts.userDir(account.id))).toBe(false);
+    expect(bazaar.list()).toEqual([]);
+    expect(new AccountService(dir, SESSION, KEY).load().list()).toEqual([]);
+    expect(accounts.register("gone", "password123").account.id).not.toBe(account.id);
+  });
+});
+
 describe("hosted: the Agent Bazaar", () => {
   async function two() {
     const dir = tmpDir();

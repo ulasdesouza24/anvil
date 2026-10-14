@@ -158,6 +158,8 @@ export function containerArgs(cfg: SandboxConfig, name: string, owner = `${proce
     "no-new-privileges",
     "--user",
     "10001:10001",
+    // gVisor (docs/HOSTING.md): the program talks to a kernel in user space, not to the kernel of the server.
+    ...(cfg.runtime ? ["--runtime", cfg.runtime] : []),
     "-e",
     `ANVIL_MAX_OUTPUT=${cfg.maxOutputBytes}`,
     ...proxyEnv,
@@ -276,7 +278,9 @@ export class SandboxManager {
         "--label",
         `${OWNER}=${process.pid}:gate${this.gatePort}`,
         "--network",
-        "bridge",
+        // With a gate network (a hosted Anvil in a container), the sidecar has no route to the internet:
+        // it reaches only Anvil and the sandboxes. The allowlist mode needs the bridge network.
+        this.cfg.gateNetwork && this.cfg.network !== "allowlist" ? this.cfg.gateNetwork : "bridge",
         "--read-only",
         "--cap-drop",
         "ALL",
@@ -284,9 +288,14 @@ export class SandboxManager {
         "no-new-privileges",
         "--memory",
         "128m",
+        "--pids-limit",
+        "128",
+        "--user",
+        "10001:10001",
+        ...(this.cfg.runtime ? ["--runtime", this.cfg.runtime] : []),
         // On Linux, host.docker.internal needs this mapping. Docker Desktop has it already.
-        "--add-host",
-        "host.docker.internal:host-gateway",
+        // With a gate network (Anvil in a container), the sidecar reaches Anvil on that network instead.
+        ...(this.cfg.gateNetwork ? [] : ["--add-host", "host.docker.internal:host-gateway"]),
         "-e",
         `ANVIL_GATE_TARGET=http://${this.cfg.gateTargetHost}:${this.gatePort}`,
         this.cfg.image,
@@ -299,6 +308,7 @@ export class SandboxManager {
     if (r.code !== 0) throw new Error(`the package gate sidecar did not start: ${r.stderr.trim().slice(0, 300)}`);
     track(this.sidecar);
     await docker(["network", "connect", "--alias", this.sidecar, SANDBOX_NETWORK, this.sidecar], undefined, 30_000);
+    if (this.cfg.gateNetwork && this.cfg.network === "allowlist") await docker(["network", "connect", this.cfg.gateNetwork, this.sidecar], undefined, 30_000);
   }
 
   /** The address of a container on the internal network: the gate knows the client by it. */
@@ -317,7 +327,8 @@ export class SandboxManager {
     if (bad.length) return fail(`not a valid package spec: ${bad.join(", ")}`);
     const container = await this.acquire(runId);
     const client = await this.addressOf(container);
-    const host = this.sidecar;
+    // The address of the sidecar, not its name: a gVisor container (docs/HOSTING.md) has no Docker DNS. /etc/hosts and IP addresses work.
+    const host = (await this.addressOf(this.sidecar)) || this.sidecar;
     const r = await docker(
       [
         "exec",

@@ -8,6 +8,7 @@ sandbox asked. On port 3128, it is the forward proxy of the allowlist mode:
 the host decides for each domain.
 """
 import http.server
+import ipaddress
 import os
 import select
 import socket
@@ -18,6 +19,19 @@ import urllib.request
 
 TARGET = os.environ["ANVIL_GATE_TARGET"]  # for example http://host.docker.internal:3141
 ALLOWED = ("/simple/", "/files/")
+
+
+def public_address(host, port):
+    """The first public address of host (docs/HOSTING.md). A private, local, link-local (cloud metadata), or
+    reserved address is refused, also when a domain name points to it. The caller connects to this address."""
+    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    for family, _, _, _, addr in infos:
+        ip = ipaddress.ip_address(addr[0])
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        if ip.is_global and not ip.is_multicast:
+            return family, addr
+    raise OSError(f"{host} points to a private or local address")
 
 
 class Proxy(http.server.BaseHTTPRequestHandler):
@@ -75,7 +89,10 @@ class EgressProxy(http.server.BaseHTTPRequestHandler):
         if not ok:
             return self._deny(reason)
         try:
-            upstream = socket.create_connection((host, int(port or 443)), timeout=30)
+            family, addr = public_address(host, int(port or 443))
+            upstream = socket.socket(family, socket.SOCK_STREAM)
+            upstream.settimeout(30)
+            upstream.connect(addr)
         except OSError as e:
             self.send_error(502, str(e)[:200])
             return
@@ -102,6 +119,10 @@ class EgressProxy(http.server.BaseHTTPRequestHandler):
         ok, reason = egress_allowed(self.client_address[0], u.hostname, str(u.port or 80))
         if not ok:
             return self._deny(reason)
+        try:
+            public_address(u.hostname, u.port or 80)
+        except OSError as e:
+            return self._deny(str(e))
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else None
         req = urllib.request.Request(self.path, data=body, method=self.command, headers={k: v for k, v in self.headers.items() if k.lower() not in ("proxy-connection", "connection", "host")})

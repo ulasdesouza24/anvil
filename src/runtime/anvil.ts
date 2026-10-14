@@ -90,18 +90,21 @@ export async function createAnvil(opts: CreateAnvilOptions = {}): Promise<Anvil>
   // The browser starts only when a node uses it for the first time.
   const browser = new BrowserService({
     executablePath: config.browserPath,
+    wsEndpoint: config.browserWsEndpoint || undefined,
     headless: config.browserHeadless,
     maxPages: config.browserMaxPages,
     navTimeoutMs: config.browserNavTimeoutMs,
     domainIntervalMs: config.browserDomainIntervalMs,
     respectRobots: config.browserRespectRobots,
   });
-  // A hosted Anvil has no browser for its users (docs/HOSTING.md): a page can reach the network of the server.
-  classes.attach({ browser: config.hosted ? undefined : browser, mcp: mcp.call });
+  // A hosted Anvil uses only a remote browser in an isolated container behind the guarded proxy (docs/HOSTING.md):
+  // a local browser could reach the network of the server.
+  const browserOk = !config.hosted || !!config.browserWsEndpoint;
+  classes.attach({ browser: browserOk ? browser : undefined, mcp: mcp.call });
   // The sandbox starts its containers only when a program runs for the first time.
   const sandbox = new SandboxManager(config.sandbox);
   const files = new FileService(config.dataDir, config.files);
-  const runs = new RunManager({ registry, client, store, config, classes, mcp, costModel, browser: config.hosted ? undefined : browser, sandbox, files });
+  const runs = new RunManager({ registry, client, store, config, classes, mcp, costModel, browser: browserOk ? browser : undefined, sandbox, files });
   // Each finished build is one more sample for the cost estimate.
   runs.onFinished((r) => {
     if (r.agentId !== "anvil-builder" || r.status === "cancelled") return;

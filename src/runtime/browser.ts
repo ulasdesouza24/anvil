@@ -63,6 +63,8 @@ export interface BrowseResult {
 
 export interface BrowserConfig {
   executablePath?: string;
+  /** A remote Playwright browser server (docs/HOSTING.md). Set: Anvil connects to it and starts no local browser. */
+  wsEndpoint?: string;
   headless: boolean;
   maxPages: number;
   navTimeoutMs: number;
@@ -166,6 +168,16 @@ export class BrowserService {
   constructor(private cfg: BrowserConfig) {}
 
   private async launch(): Promise<Browser> {
+    if (this.cfg.wsEndpoint) {
+      const b = await chromium.connect(this.cfg.wsEndpoint, { timeout: 30_000 });
+      // The remote browser can restart: the next page connects again.
+      b.on("disconnected", () => {
+        this.browser = undefined;
+        this.context = undefined;
+      });
+      this.launchedWith = "remote browser";
+      return b;
+    }
     const candidates = [this.cfg.executablePath, undefined, ...FALLBACK_PATHS.filter((p) => fs.existsSync(p))].filter((p, i, a) => a.indexOf(p) === i);
     const errors: string[] = [];
     for (const executablePath of candidates) {

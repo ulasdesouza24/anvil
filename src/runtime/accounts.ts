@@ -146,6 +146,18 @@ export class AccountService {
     return this.sign(a);
   }
 
+  /**
+   * Deletes an account after a check of its password. The caller removes the workspace data first.
+   * Each token of the account stops working, and the username is free again.
+   */
+  remove(id: string, password: string): void {
+    const a = this.accounts.find((x) => x.id === id);
+    if (!a) throw new AccountError("No such account", 401);
+    this.login(a.username, password);
+    this.accounts = this.accounts.filter((x) => x.id !== id);
+    this.save();
+  }
+
   /** Ends each session of the account: each old token stops working. */
   logoutAll(id: string): void {
     const a = this.accounts.find((x) => x.id === id);

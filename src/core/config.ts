@@ -304,8 +304,22 @@ export interface AnvilConfig {
     maxSecondsPerRun: number;
     /** A code_agent step keeps its working program and runs it again for the next inputs. It writes a new program only when the kept one fails. */
     programCache: boolean;
+    /** The container runtime of the sandbox and its gate (docs/HOSTING.md): "runsc" (gVisor) gives each container its own kernel. Empty: the Docker default. */
+    runtime: string;
+    /**
+     * The Docker network that the gate sidecar joins to reach the package gate of Anvil, when Anvil runs in a container
+     * (docs/HOSTING.md). Empty: the sidecar reaches the host through host.docker.internal.
+     */
+    gateNetwork: string;
   };
   browserPath?: string;
+  /**
+   * A remote browser (docs/HOSTING.md): the WebSocket of a Playwright browser server, for example in a container
+   * without a route to the network of the server. Empty: Anvil starts a local browser.
+   */
+  browserWsEndpoint: string;
+  /** The port of the guarded forward proxy for the remote browser (docs/HOSTING.md). 0: no proxy. */
+  egressProxyPort: number;
   browserHeadless: boolean;
   browserMaxPages: number;
   browserNavTimeoutMs: number;
@@ -633,8 +647,12 @@ export function loadConfig(): AnvilConfig {
       egressMaxBody: num("ANVIL_EGRESS_MAX_BODY", 65_536),
       maxSecondsPerRun: num("ANVIL_SANDBOX_MAX_SECONDS_PER_RUN", 300),
       programCache: (process.env.ANVIL_CODE_PROGRAM_CACHE ?? "on") !== "off",
+      runtime: process.env.ANVIL_SANDBOX_RUNTIME ?? "",
+      gateNetwork: process.env.ANVIL_SANDBOX_GATE_NETWORK ?? "",
     },
     browserPath: process.env.ANVIL_BROWSER_PATH || undefined,
+    browserWsEndpoint: process.env.ANVIL_BROWSER_WS ?? "",
+    egressProxyPort: num("ANVIL_EGRESS_PROXY_PORT", 0),
     browserHeadless: (process.env.ANVIL_BROWSER_HEADLESS ?? "true") !== "false",
     browserMaxPages: num("ANVIL_BROWSER_MAX_PAGES", 3),
     browserNavTimeoutMs: num("ANVIL_BROWSER_NAV_TIMEOUT_MS", 30_000),

@@ -1,6 +1,10 @@
-# The hosted Anvil API (docs/HOSTING.md). The web app is on Vercel, so this image has no browser and no Docker CLI:
-# a hosted workspace runs no Python sandbox and no local browser. Code steps run in QuickJS (WebAssembly).
+# The hosted Anvil API (docs/HOSTING.md). The web app is on Vercel. The browser runs in its own container
+# (deploy/hosted/browser), and the Python sandbox runs in gVisor containers that the Docker guard checks.
+# This image is also the image of the Docker guard (another command, see compose.yaml).
 FROM node:22-bookworm-slim
+
+# The Docker CLI: Anvil starts the sandbox containers through the socket of the Docker guard, never the real socket.
+COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
 
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -13,7 +17,6 @@ ENV NODE_ENV=production \
     ANVIL_HOSTED=on \
     ANVIL_HOST=0.0.0.0 \
     ANVIL_DATA_DIR=/data \
-    ANVIL_SANDBOX=off \
     ANVIL_HEALTH_EVERY=off
 # The volume gets the owner of this folder: the server runs as the user "node", not as root.
 RUN mkdir -p /data && chown node:node /data

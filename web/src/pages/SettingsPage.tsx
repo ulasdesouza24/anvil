@@ -249,7 +249,62 @@ function AccountCard({ me, onMe }: { me: Me; onMe: (m: Me) => void }) {
         </button>
       </div>
       {msg && <div className={`mt-2 text-[12.5px] ${msg.ok ? "text-[var(--color-ok)]" : "text-[var(--color-bad)]"}`}>{msg.text}</div>}
+      <DeleteAccount />
     </section>
+  );
+}
+
+/** The danger zone: delete the account and all its data, after the password and the username are typed again. */
+function DeleteAccount() {
+  const { me, signOut } = useSession();
+  const [open, setOpen] = useState(false);
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const username = me?.account?.username ?? "";
+  if (!open)
+    return (
+      <div className="mt-5 border-t border-[var(--color-line)] pt-4">
+        <button className="btn btn-danger" onClick={() => setOpen(true)}>
+          Delete the account
+        </button>
+      </div>
+    );
+  return (
+    <form
+      className="mt-5 rounded-lg border border-[rgba(248,113,113,0.4)] p-4"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        setErr("");
+        try {
+          await api.deleteAccount(password);
+          signOut();
+        } catch (x) {
+          setErr((x as Error).message);
+          setBusy(false);
+        }
+      }}
+    >
+      <div className="text-[13px] font-semibold text-[var(--color-bad)]">Delete the account</div>
+      <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--color-muted)]">
+        This deletes your agents, runs, files, secrets, settings, your OpenRouter key, and your Bazaar listings. You cannot undo it. Copies that other users added stay with them.
+      </p>
+      <div className="mt-3 grid gap-2 md:grid-cols-2">
+        <input className="input" placeholder={`Type ${username}`} value={name} onChange={(e) => setName(e.target.value)} />
+        <input className="input" type="password" autoComplete="current-password" placeholder="Your password" value={password} onChange={(e) => setPassword(e.target.value)} />
+      </div>
+      {err && <div className="mt-2 text-[12.5px] text-[var(--color-bad)]">{err}</div>}
+      <div className="mt-3 flex gap-2">
+        <button className="btn" type="button" onClick={() => setOpen(false)}>
+          Cancel
+        </button>
+        <button className="btn btn-danger" type="submit" disabled={busy || name !== username || !password}>
+          {busy ? <Spinner /> : null} Delete everything
+        </button>
+      </div>
+    </form>
   );
 }
 

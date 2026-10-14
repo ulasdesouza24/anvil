@@ -1,5 +1,10 @@
-# The hosted Anvil API (docs/HOSTING.md): docker compose -f deploy/hosted/compose.yaml up -d --build
-# It joins the network of an existing Caddy (EDGE_NETWORK), and that Caddy gives it HTTPS (deploy/hosted/anvil.caddy).
+# The hosted Anvil (docs/HOSTING.md): docker compose -f deploy/hosted/compose.yaml up -d --build
+# Three services:
+#  - anvil: the API. It joins the network of an existing Caddy (EDGE_NETWORK), and that Caddy gives it HTTPS.
+#  - docker-guard: the only service with the Docker socket. It has no network. Anvil starts the gVisor sandbox
+#    containers through its checked socket.
+#  - browser: Chromium in gVisor, on an internal network. Its page requests go through the guarded proxy of anvil.
+# The host needs gVisor (runsc) as a Docker runtime, and the image anvil-sandbox:py312 (docker build -t anvil-sandbox:py312 sandbox).
 name: anvil
 services:
   anvil:
@@ -12,11 +17,31 @@ services:
     stop_grace_period: 30s
     # ANVIL_SESSION_SECRET, ANVIL_SECRETS_KEY, ANVIL_CORS_ORIGINS, ANVIL_PUBLIC_URL (see .env.example here).
     env_file: .env
+    environment:
+      DOCKER_HOST: unix:///run/anvil-docker/docker.sock
+      ANVIL_SANDBOX: docker
+      ANVIL_SANDBOX_RUNTIME: runsc
+      ANVIL_SANDBOX_NETWORK: isolated
+      ANVIL_SANDBOX_POOL: "0"
+      ANVIL_SANDBOX_GATE_NETWORK: anvil-gate-net
+      ANVIL_GATE_BIND: 0.0.0.0
+      # gVisor containers have no Docker DNS: the sidecar and the browser reach anvil by its fixed addresses below.
+      ANVIL_GATE_TARGET_HOST: 172.31.250.10
+      ANVIL_BROWSER_WS: ws://browser:3000/anvil
+      ANVIL_EGRESS_PROXY_PORT: "3129"
     volumes:
       - anvil-data:/data
+      - guard-socket:/run/anvil-docker
     networks:
       edge:
         aliases: [anvil]
+      gate:
+        aliases: [anvil]
+        ipv4_address: 172.31.250.10
+      browser:
+        aliases: [anvil]
+        ipv4_address: 172.31.251.10
+    depends_on: [docker-guard, browser]
     # The API shares the machine with other services: it gets a fixed share of memory and CPU.
     mem_limit: 2g
     cpus: 1.5
@@ -26,10 +51,62 @@ services:
       timeout: 5s
       retries: 3
 
+  docker-guard:
+    image: anvil-hosted:latest
+    restart: unless-stopped
+    init: true
+    command: ["node", "--import", "tsx", "src/runtime/dockerGuard.ts"]
+    # Root only for the Docker socket. No network: it talks only through the two sockets.
+    user: root
+    network_mode: none
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges]
+    environment:
+      ANVIL_GUARD_IMAGE: anvil-sandbox:py312
+      ANVIL_GUARD_RUNTIME: runsc
+      ANVIL_GUARD_NETWORKS: anvil-sandbox-net,anvil-gate-net
+      ANVIL_GUARD_CREATE_NETWORK: anvil-sandbox-net
+      ANVIL_GUARD_MAX_CONTAINERS: "6"
+      ANVIL_GUARD_MAX_MEMORY_BYTES: "1073741824"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - guard-socket:/run/anvil-docker
+    mem_limit: 256m
+
+  browser:
+    build: ./browser
+    image: anvil-browser:latest
+    restart: unless-stopped
+    init: true
+    runtime: runsc
+    environment:
+      ANVIL_BROWSER_PROXY: http://172.31.251.10:3129
+    networks: [browser]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges]
+    shm_size: 512m
+    mem_limit: 1536m
+    cpus: 1
+
 volumes:
   anvil-data: {}
+  guard-socket: {}
 
 networks:
   edge:
     external: true
     name: ${EDGE_NETWORK:-deploy_default}
+  # The gate sidecar reaches the package gate of anvil here. Internal: no route to the internet.
+  gate:
+    name: anvil-gate-net
+    internal: true
+    ipam:
+      config: [{ subnet: 172.31.250.0/24 }]
+  # The browser reaches only the guarded proxy of anvil here. Internal: no route to the internet.
+  browser:
+    name: anvil-browser-net
+    internal: true
+    ipam:
+      config: [{ subnet: 172.31.251.0/24 }]

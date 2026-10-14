@@ -86,8 +86,8 @@ export class WorkspaceManager {
     cfg.apiKey = this.deps.settings.apiKey(id) || (id === "local" ? this.base.apiKey : "");
     if (id === "local") return cfg;
     cfg.dataDir = this.deps.accounts!.userDir(id);
-    // A hosted workspace runs no programs in the server Docker and no local browser (docs/HOSTING.md).
-    cfg.sandbox = { ...cfg.sandbox, mode: "off" };
+    // A hosted workspace runs programs only in gVisor behind the Docker guard (docs/HOSTING.md). Without the runtime, the sandbox stays off.
+    if (!cfg.sandbox.runtime) cfg.sandbox = { ...cfg.sandbox, mode: "off" };
     return cfg;
   }
 
@@ -112,6 +112,22 @@ export class WorkspaceManager {
     if (!p) return;
     const ws = await p;
     assignConfig(ws.anvil.config, this.configFor(userId));
+  }
+
+  /** Stops and forgets the workspace of a user: its triggers, health checks, MCP connections, browser, and sandbox. */
+  async close(userId: string): Promise<void> {
+    const p = this.open.get(userId);
+    if (!p) return;
+    this.open.delete(userId);
+    const ws = await p.catch(() => undefined);
+    if (!ws) return;
+    ws.anvil.triggers.stop();
+    ws.health.stop();
+    for (const r of ws.anvil.store.listRuns({ limit: Number.MAX_SAFE_INTEGER })) if (ws.anvil.runs.isActive(r.id)) ws.anvil.runs.cancel(r.id);
+    await ws.anvil.mcp.closeAll().catch(() => undefined);
+    await ws.anvil.browser.close().catch(() => undefined);
+    await ws.anvil.sandbox.dispose().catch(() => undefined);
+    await ws.anvil.store.flush();
   }
 
   /** Opens the workspace of each account, so the triggers of each user run after a restart. */

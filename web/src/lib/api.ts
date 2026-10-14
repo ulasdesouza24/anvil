@@ -501,6 +501,8 @@ export const api = {
   register: (username: string, password: string) => req<{ account: Account; token: string }>("POST", "/api/auth/register", { username, password }),
   login: (username: string, password: string) => req<{ account: Account; token: string }>("POST", "/api/auth/login", { username, password }),
   logoutAll: () => req<{ ok: true }>("POST", "/api/auth/logout-all"),
+  /** Deletes the account and all its data. The password confirms it. */
+  deleteAccount: (password: string) => req<{ deleted: true }>("DELETE", "/api/me", { password }),
   me: () => req<Me>("GET", "/api/me"),
   saveSettings: (values: Record<string, unknown>) => req<Me>("PUT", "/api/me/settings", { values }),
   saveKey: (apiKey: string) => req<Me>("PUT", "/api/me/key", { apiKey }),

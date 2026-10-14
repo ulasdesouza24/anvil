@@ -18,6 +18,7 @@ import { SETTING_FIELDS, SETTING_GROUPS, settingValues } from "../core/userSetti
 import { AccountService } from "../runtime/accounts.js";
 import { Bazaar } from "../runtime/bazaar.js";
 import { installNetGuard } from "../runtime/netGuard.js";
+import { startEgressProxy } from "../runtime/egressProxy.js";
 import { localSettingsKey, SettingsStore } from "../runtime/settingsStore.js";
 import { inWorkspace, WorkspaceManager, type Workspace } from "../runtime/workspaces.js";
 import { allLessons, classifyLibrary, deleteLesson, exampleGate, knownDomains, taxonomyOf } from "../builder/library.js";
@@ -53,6 +54,8 @@ if (baseConfig.hosted) {
   accounts = new AccountService(baseConfig.dataDir, sessionSecret, hostedSecretsKey).load();
   settingsStore = accounts.settingsStore();
   installNetGuard();
+  // The remote browser reaches the web only through this guarded proxy (docs/HOSTING.md).
+  if (baseConfig.egressProxyPort) startEgressProxy({ port: baseConfig.egressProxyPort, log: (m) => console.log(m) });
   console.log(`[hosted] ${accounts.list().length} account(s). Each user runs with an own OpenRouter key.`);
 } else {
   settingsStore = new SettingsStore((id) => path.join(baseConfig.dataDir, `${id}-settings.json`), localSettingsKey(baseConfig.dataDir));
@@ -591,7 +594,9 @@ app.put("/api/agents/:id/sandbox", async (c) => {
           .replace(/^www\./, ""),
       ),
     ),
-  ].filter((d) => /^[a-z0-9.-]+\.[a-z]{2,}$|^\d+\.\d+\.\d+\.\d+$/.test(d));
+  ]
+    // A hosted Anvil approves only domain names: an IP address can be an address of the private network (docs/HOSTING.md).
+    .filter((d) => /^[a-z0-9.-]+\.[a-z]{2,}$/.test(d) || (!accounts && /^\d+\.\d+\.\d+\.\d+$/.test(d)));
   const next = { ...spec, policy: { ...spec.policy, sandbox: { ...(spec.policy.sandbox ?? {}), allowDomains: domains } } };
   const saved = await store.saveVersion(next, {
     note: `sandbox allowlist: ${domains.join(", ") || "(none)"}`,
@@ -840,6 +845,26 @@ app.put("/api/me/password", async (c) => {
   } catch (e) {
     return accountError(c, e);
   }
+});
+
+/**
+ * Deletes the account of the session and all its data: agents, runs, files, secrets, settings, the key, and its
+ * Bazaar listings. The copies that other users added stay: they belong to those users.
+ */
+app.delete("/api/me", async (c) => {
+  if (!accounts) return c.json({ error: "The local Anvil has no accounts" }, 404);
+  const { password } = await c.req.json<{ password?: string }>().catch(() => ({}) as { password?: string });
+  const id = ws().id;
+  try {
+    accounts.login(accounts.get(id)?.username ?? "", password ?? "");
+  } catch (e) {
+    return accountError(c, e);
+  }
+  await workspaces.close(id);
+  bazaar.removeOwner(id);
+  fs.rmSync(accounts.userDir(id), { recursive: true, force: true });
+  accounts.remove(id, password ?? "");
+  return c.json({ deleted: true });
 });
 
 app.post("/api/auth/logout-all", (c) => {
