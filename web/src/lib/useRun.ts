@@ -44,6 +44,8 @@ export function deriveState(events: RunEvent[], record: RunState["record"]): Omi
       case "node.completed":
         nodeStates[e.nodeId] = "done";
         nodeOutputs[e.nodeId] = e.output;
+        delete nodeErrors[e.nodeId];
+        waiting.delete(e.nodeId);
         break;
       case "node.skipped":
         nodeStates[e.nodeId] = "skipped";
@@ -108,29 +110,28 @@ export function deriveState(events: RunEvent[], record: RunState["record"]): Omi
     status = record.status;
     Object.assign(usage, record.usage);
   }
+  if (["completed", "failed", "cancelled"].includes(status)) waiting.clear();
   const pending = [...waiting.entries()].flatMap(([nodeId, reqs]) => reqs.map((request) => ({ nodeId, request })));
   return { status, nodeStates, nodeOutputs, nodeErrors, usage, pending, output, error, startedAt, endedAt, artifacts };
 }
 
 /** Live run state from the SSE event stream (replays history, then streams). */
 export function useRun(runId: string | undefined): RunState & { refresh: () => void } {
+  const [sourceId, setSourceId] = useState<string>();
   const [record, setRecord] = useState<RunState["record"]>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [tick, setTick] = useState(0);
   const buffer = useRef<RunEvent[]>([]);
 
   useEffect(() => {
-    if (!runId) return;
     let cancelled = false;
+    let es: EventSource | undefined;
+    let flushTimer: number | undefined;
+    setSourceId(runId);
     setEvents([]);
     setRecord(null);
     buffer.current = [];
-    api
-      .runRecord(runId)
-      .then((r) => !cancelled && setRecord({ ...r, events: [] }))
-      .catch(() => undefined);
-    const es = new EventSource(withToken(`/api/runs/${runId}/events`));
-    let flushTimer: number | undefined;
+    if (!runId) return;
     const flush = () => {
       flushTimer = undefined;
       if (cancelled || !buffer.current.length) return;
@@ -138,30 +139,48 @@ export function useRun(runId: string | undefined): RunState & { refresh: () => v
       buffer.current = [];
       setEvents((prev) => [...prev, ...batch]);
     };
-    es.addEventListener("event", (m) => {
-      buffer.current.push(JSON.parse((m as MessageEvent).data));
-      if (!flushTimer) flushTimer = window.setTimeout(flush, 60);
-    });
-    es.addEventListener("end", () => {
-      es.close();
+    const finish = () => {
+      es?.close();
       flush();
-      api
+      void api
         .runRecord(runId)
-        .then((r) => !cancelled && setRecord({ ...r, events: [] }))
+        .then((r) => {
+          if (!cancelled) setRecord({ ...r, events: [] });
+        })
         .catch(() => undefined);
-    });
-    es.onerror = () => {
-      // The browser reconnects automatically; if the run is over we get "end".
     };
+    const connect = () => {
+      if (cancelled) return;
+      es = new EventSource(withToken(`/api/runs/${runId}/events`));
+      es.addEventListener("event", (m) => {
+        const event = JSON.parse((m as MessageEvent).data) as RunEvent;
+        buffer.current.push(event);
+        if (["run.completed", "run.failed", "run.cancelled"].includes(event.type)) finish();
+        else if (!flushTimer) flushTimer = window.setTimeout(flush, 60);
+      });
+      es.addEventListener("end", finish);
+    };
+    void api
+      .runRecord(runId)
+      .then((r) => {
+        if (cancelled) return;
+        setRecord({ ...r, events: [] });
+        if (["completed", "failed", "cancelled"].includes(r.status)) setEvents(r.events);
+        else connect();
+      })
+      .catch(() => connect());
     return () => {
       cancelled = true;
-      es.close();
+      es?.close();
       if (flushTimer) clearTimeout(flushTimer);
     };
   }, [runId, tick]);
 
-  const derived = useMemo(() => deriveState(events, record), [events, record]);
-  return { record, events, ...derived, refresh: () => setTick((t) => t + 1) };
+  const matching = sourceId === runId;
+  const visibleRecord = matching ? record : null;
+  const visibleEvents = matching ? events : [];
+  const derived = useMemo(() => deriveState(visibleEvents, visibleRecord), [events, record, runId, sourceId]);
+  return { record: visibleRecord, events: visibleEvents, ...derived, refresh: () => setTick((t) => t + 1) };
 }
 
 export function useNow(active: boolean, ms = 500) {

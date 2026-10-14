@@ -1,0 +1,19 @@
+# The Caddy site of the hosted Anvil API (docs/HOSTING.md). Put this file where your Caddyfile imports sites.
+# Change the host name to your domain (an sslip.io name of the server IP also works: anvil-api.1-2-3-4.sslip.io).
+anvil-api.example.com {
+	encode zstd gzip
+	# File uploads of agents (docs/FILES.md) are at most 20 MB.
+	request_body {
+		max_size 25MB
+	}
+	reverse_proxy anvil:8787 {
+		# Run events are a stream (SSE): each event goes to the browser at once.
+		flush_interval -1
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+}

@@ -1,0 +1,35 @@
+# The hosted Anvil API (docs/HOSTING.md): docker compose -f deploy/hosted/compose.yaml up -d --build
+# It joins the network of an existing Caddy (EDGE_NETWORK), and that Caddy gives it HTTPS (deploy/hosted/anvil.caddy).
+name: anvil
+services:
+  anvil:
+    build:
+      context: ../..
+      dockerfile: deploy/hosted/Dockerfile
+    image: anvil-hosted:latest
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    # ANVIL_SESSION_SECRET, ANVIL_SECRETS_KEY, ANVIL_CORS_ORIGINS, ANVIL_PUBLIC_URL (see .env.example here).
+    env_file: .env
+    volumes:
+      - anvil-data:/data
+    networks:
+      edge:
+        aliases: [anvil]
+    # The API shares the machine with other services: it gets a fixed share of memory and CPU.
+    mem_limit: 2g
+    cpus: 1.5
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  anvil-data: {}
+
+networks:
+  edge:
+    external: true
+    name: ${EDGE_NETWORK:-deploy_default}

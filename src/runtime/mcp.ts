@@ -1,3 +1,4 @@
+import { currentEnv } from "../core/scope.js";
 import crypto from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -117,6 +118,8 @@ export interface McpHubOptions {
   /** Injectable transport factory (tests use in-memory transports). */
   createTransport?: (cfg: McpServerConfig) => Transport | Promise<Transport>;
   env?: Record<string, string | undefined>;
+  /** A hosted Anvil (docs/HOSTING.md) does not start local programs: only http MCP servers. */
+  allowStdio?: boolean;
 }
 
 export class McpHub {
@@ -127,7 +130,7 @@ export class McpHub {
   constructor(private opts: McpHubOptions) {}
 
   private get env() {
-    return this.opts.env ?? process.env;
+    return this.opts.env ?? currentEnv();
   }
 
   async configs(): Promise<McpServerConfig[]> {
@@ -143,6 +146,7 @@ export class McpHub {
   private async transportFor(cfg: McpServerConfig): Promise<Transport> {
     if (this.opts.createTransport) return this.opts.createTransport(cfg);
     if (cfg.transport === "stdio") {
+      if (this.opts.allowStdio === false) throw new Error("The hosted service connects only http MCP servers");
       if (!cfg.command) throw new Error("stdio servers need a command");
       const env = { ...getDefaultEnvironment(), ...Object.fromEntries(Object.entries(cfg.env).map(([k, v]) => [k, expandVars(v, this.env)])) };
       return new StdioClientTransport({ command: cfg.command, args: cfg.args, env, stderr: "ignore" });
@@ -230,6 +234,8 @@ export class McpHub {
 
   async addServer(raw: unknown) {
     const cfg = McpServerConfigZ.parse(raw);
+    if (cfg.transport === "stdio" && this.opts.allowStdio === false)
+      throw new Error("The hosted service connects only http MCP servers. A stdio server runs a program on the server.");
     if (cfg.transport === "stdio" && !cfg.command) throw new Error("stdio servers need a command");
     if (cfg.transport === "http" && !cfg.url) throw new Error("http servers need a url");
     await this.opts.store.set(NS, cfg.name, cfg);

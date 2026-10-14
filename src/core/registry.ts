@@ -38,6 +38,8 @@ export interface RunAgentOptions {
   waitForHuman?: (nodeId: string, req: HumanRequest, signal: AbortSignal) => Promise<unknown>;
   /** The top run of the run tree (docs/EFFECTS.md). */
   rootRunId?: string;
+  /** Actions with a side effect give a preview and do not go out (docs/WORKFLOW_EDITOR.md). Nested runs get it from the parent. */
+  dryRun?: boolean;
 }
 
 export interface RunAgentResult {
@@ -85,6 +87,8 @@ export interface Services {
   rootRunId?: string;
   /** The run reads live data again: the live fetch cache is off (docs/HEALTH.md). */
   freshData?: boolean;
+  /** A dry run of the workflow editor: an action with a side effect gives a preview and does not go out (docs/WORKFLOW_EDITOR.md). */
+  dryRun?: boolean;
   /** Connected MCP servers (optional). */
   mcp?: { call: import("./customClass.js").McpCaller };
   /** Runtime-defined node classes (optional so pure engine tests don't need it). */

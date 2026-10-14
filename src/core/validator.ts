@@ -274,6 +274,15 @@ export function validateSpec(raw: unknown, registry: Registry, opts: ValidateOpt
   if (inputs.length !== 1)
     add({ severity: "error", code: inputs.length ? "MULTIPLE_INPUT_NODES" : "NO_INPUT_NODE", message: `An agent needs exactly one "input" node (found ${inputs.length})` });
   if (!outputs.length) add({ severity: "error", code: "NO_OUTPUT_NODE", message: 'An agent needs at least one "output" node' });
+  for (const n of [...inputs, ...outputs])
+    if (n.disabled)
+      add({
+        severity: "error",
+        code: "DISABLED_IO",
+        message: `The ${n.type} node "${n.id}" cannot be disabled`,
+        path: `/nodes/${nodeIndex.get(n.id)}/disabled`,
+        nodeId: n.id,
+      });
   if (spec.inputSchema && (spec.inputSchema as JSONSchema).type !== "object")
     add({ severity: "error", code: "INPUT_SCHEMA", message: 'inputSchema.type must be "object"', path: "/inputSchema/type" });
 
@@ -437,6 +446,15 @@ export function validateSpec(raw: unknown, registry: Registry, opts: ValidateOpt
           continue;
         }
         const target = nodes[nodeIndex.get(ref.nodeId)!];
+        if (target.disabled && !n.disabled && !ref.source.includes("??"))
+          add({
+            severity: "warning",
+            code: "DISABLED_NODE_REFERENCED",
+            message: `${where}: "${ref.nodeId}" is disabled, so its output is empty`,
+            path: ref.pointer,
+            nodeId: n.id,
+            hint: `Enable "${ref.nodeId}", or give a fallback: {{${ref.source} ?? "…"}}.`,
+          });
         const tcls = registry.get(target.type);
         // Custom classes have config-independent output schemas, so check fields even if the config is invalid.
         const tcfg = parsedConfigs.get(target.id) ?? (tcls?.custom ? (target.config ?? {}) : undefined);
@@ -484,6 +502,8 @@ export function validateSpec(raw: unknown, registry: Registry, opts: ValidateOpt
   // A node may be skipped for `target` if target is still reachable from input without passing through it.
   const skipCache = new Map<string, boolean>();
   const mayBeSkipped = (nodeId: string, target: string): boolean => {
+    // A disabled step never gives an output.
+    if (nodes[nodeIndex.get(nodeId) ?? -1]?.disabled) return true;
     const key = `${nodeId}>${target}`;
     if (skipCache.has(key)) return skipCache.get(key)!;
     const start = inputs[0]?.id;
@@ -552,7 +572,8 @@ export function validateSpec(raw: unknown, registry: Registry, opts: ValidateOpt
   for (const n of nodes) {
     const cls = registry.get(n.type);
     const cfg = parsedConfigs.get(n.id);
-    if (!cls?.sideEffects || !cfg) continue;
+    // A disabled step does not run, so it changes nothing.
+    if (!cls?.sideEffects || !cfg || n.disabled) continue;
     let fx = false;
     try {
       fx = cls.sideEffects(cfg as never);
@@ -560,7 +581,8 @@ export function validateSpec(raw: unknown, registry: Registry, opts: ValidateOpt
       fx = false;
     }
     if (!fx) continue;
-    const gated = [...(anc.get(n.id) ?? [])].some((a) => nodes[nodeIndex.get(a)!]?.type === "human_approval");
+    // A disabled approval step does not stop anything (docs/WORKFLOW_EDITOR.md).
+    const gated = [...(anc.get(n.id) ?? [])].some((a) => nodes[nodeIndex.get(a)!]?.type === "human_approval" && !nodes[nodeIndex.get(a)!]?.disabled);
     if (!gated) {
       add({
         severity: spec.policy?.requireApprovalForSideEffects ? "error" : "warning",
@@ -579,7 +601,7 @@ export function validateSpec(raw: unknown, registry: Registry, opts: ValidateOpt
   if (conversational || specRules(spec).length) {
     const next = new Map<string, { to: string; port?: string }[]>();
     for (const e of spec.edges ?? []) next.set(e.from, [...(next.get(e.from) ?? []), { to: e.to, port: e.port }]);
-    const isGate = (id: string) => nodes[nodeIndex.get(id) ?? -1]?.type === "action_gate";
+    const isGate = (id: string) => nodes[nodeIndex.get(id) ?? -1]?.type === "action_gate" && !nodes[nodeIndex.get(id) ?? -1]?.disabled;
     const walk = (starts: string[]) => {
       const seen = new Set<string>();
       const queue = [...starts];
@@ -597,7 +619,7 @@ export function validateSpec(raw: unknown, registry: Registry, opts: ValidateOpt
     for (const n of nodes) {
       const cls = registry.get(n.type);
       const cfg = parsedConfigs.get(n.id);
-      if (!cls?.sideEffects || !cfg || n.type === "action_gate") continue;
+      if (!cls?.sideEffects || !cfg || n.type === "action_gate" || n.disabled) continue;
       let fx = false;
       try {
         fx = cls.sideEffects(cfg as never);

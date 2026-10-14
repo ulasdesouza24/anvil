@@ -1,6 +1,6 @@
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import type { TriggerManager } from "../runtime/triggers.js";
+import type { Workspace } from "../runtime/workspaces.js";
 
 /** Reads the body of a webhook request into an object: JSON, a form, or text. */
 async function readPayload(req: Request, buf: ArrayBuffer, rawBody: string): Promise<{ payload: unknown } | { error: string }> {
@@ -24,23 +24,32 @@ async function readPayload(req: Request, buf: ArrayBuffer, rawBody: string): Pro
  * The public webhook entry point (docs/TRIGGERS.md): a signed request (X-Anvil-Signature and X-Anvil-Timestamp) or
  * the token header, by ANVIL_WEBHOOK_AUTH. The URL never carries the secret. The body has a size limit.
  */
-export function mountWebhooks(app: Hono, triggers: TriggerManager, maxBodyBytes: number) {
-  app.on(
-    ["POST", "PUT"],
-    "/api/hooks/:agentId/:triggerId",
-    bodyLimit({ maxSize: maxBodyBytes, onError: (c) => c.json({ error: `the body is larger than ${maxBodyBytes} bytes` }, 413) }),
-    async (c) => {
-      const buf = await c.req.arrayBuffer();
-      const rawBody = new TextDecoder().decode(buf);
-      const read = await readPayload(c.req.raw, buf, rawBody);
-      if ("error" in read) return c.json({ error: read.error }, 400);
-      const r = await triggers.handleWebhook(c.req.param("agentId"), c.req.param("triggerId"), {
+export function mountWebhooks(
+  app: Hono,
+  /** The workspace of a webhook: the local one (no user), or the workspace of a hosted user. */
+  resolve: (userId: string | undefined) => Promise<Workspace | undefined>,
+  run: <T>(ws: Workspace, fn: () => Promise<T>) => Promise<T>,
+  maxBodyBytes: number,
+) {
+  const limit = bodyLimit({ maxSize: maxBodyBytes, onError: (c) => c.json({ error: `the body is larger than ${maxBodyBytes} bytes` }, 413) });
+  const handler = async (c: Context) => {
+    const ws = await resolve(c.req.param("user"));
+    if (!ws) return c.json({ error: "no such webhook" }, 404);
+    const buf = await c.req.arrayBuffer();
+    const rawBody = new TextDecoder().decode(buf);
+    const read = await readPayload(c.req.raw, buf, rawBody);
+    if ("error" in read) return c.json({ error: read.error }, 400);
+    const r = await run(ws, () =>
+      ws.anvil.triggers.handleWebhook(c.req.param("agentId")!, c.req.param("triggerId")!, {
         rawBody,
         payload: read.payload,
         headers: c.req.header(),
         query: Object.fromEntries(Object.entries(c.req.query()).filter(([k]) => k !== "token")),
-      });
-      return c.json(r.body, r.status as 200);
-    },
-  );
+      }),
+    );
+    return c.json(r.body, r.status as 200);
+  };
+  // A hosted Anvil names the workspace in the URL: /api/hooks/u/<user>/<agent>/<trigger>.
+  app.on(["POST", "PUT"], "/api/hooks/u/:user/:agentId/:triggerId", limit, handler);
+  app.on(["POST", "PUT"], "/api/hooks/:agentId/:triggerId", limit, handler);
 }

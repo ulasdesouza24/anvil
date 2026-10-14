@@ -102,6 +102,14 @@ const keyOf = (agentId: string, triggerId: string) => `${agentId}:${triggerId}`;
  * becomes an ordinary recorded run (kind "trigger"), so it is traced, costed
  * and visible like any other run.
  */
+/** A request that the workflow editor caught on a webhook trigger, and the agent input that it maps to. */
+export interface TestWebhookEvent {
+  payload: unknown;
+  headers: Record<string, string>;
+  query: Record<string, string>;
+  input: unknown;
+}
+
 export class TriggerManager {
   private state = new Map<string, TriggerState>();
   private timer?: NodeJS.Timeout;
@@ -373,6 +381,15 @@ export class TriggerManager {
     const headers = Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k.toLowerCase(), v]));
     const auth = this.authenticate(s, headers, req.rawBody);
     if ("error" in auth) return { status: auth.status, body: { error: auth.error } };
+    // The workflow editor listens for a test event (docs/WORKFLOW_EDITOR.md): the event starts no run, also for a disabled trigger.
+    const listener = this.testListeners.get(`${agentId}/${triggerId}`);
+    if (listener) {
+      const testHeaders = Object.fromEntries(Object.entries(headers).filter(([k]) => !/token|authorization|cookie|signature/i.test(k)));
+      const natural = req.payload && typeof req.payload === "object" && !Array.isArray(req.payload) ? req.payload : { payload: req.payload };
+      const scope = { trigger: { id: t.id, type: t.type, agentId, firedAt: new Date(this.now()).toISOString() }, payload: req.payload, headers: testHeaders, query: req.query };
+      listener({ payload: req.payload, headers: testHeaders, query: req.query, input: this.mapInput(t, scope, natural) });
+      return { status: 200, body: { test: true, captured: true } };
+    }
     if (!this.isEnabled(agentId, t)) return { status: 409, body: { error: "trigger is disabled" } };
     const deliveryId = this.webhookConfig.idHeaders.map((h) => headers[h]).find((v) => !!v);
     const prior = deliveryId ? s.deliveries?.[`id:${deliveryId}`] : undefined;
@@ -390,6 +407,30 @@ export class TriggerManager {
     if (!t.respond) return { status: 202, body: { runId: r.run.id } };
     const done = await this.deps.runs.waitForRun(r.run.id);
     return { status: done?.status === "completed" ? 200 : 422, body: { runId: r.run.id, status: done?.status, output: done?.output, error: done?.error } };
+  }
+
+  private testListeners = new Map<string, (event: TestWebhookEvent) => void>();
+
+  /**
+   * Waits for the next request to a saved webhook trigger, for the workflow editor (docs/WORKFLOW_EDITOR.md).
+   * The request gets the normal checks (the token or the signature) and starts no run. Gives null after the time limit.
+   */
+  listenForTest(agentId: string, triggerId: string, timeoutMs: number, signal?: AbortSignal): Promise<TestWebhookEvent | null> {
+    const found = this.agents().find((x) => x.agent.id === agentId);
+    const t = found?.spec.triggers?.find((x) => x.id === triggerId);
+    if (!t || t.type !== "webhook") return Promise.reject(new Error("no saved webhook trigger with this id: save the workflow first"));
+    const key = `${agentId}/${triggerId}`;
+    return new Promise((resolve) => {
+      const done = (v: TestWebhookEvent | null) => {
+        clearTimeout(timer);
+        if (this.testListeners.get(key) === listener) this.testListeners.delete(key);
+        resolve(v);
+      };
+      const listener = (e: TestWebhookEvent) => done(e);
+      const timer = setTimeout(() => done(null), timeoutMs);
+      signal?.addEventListener("abort", () => done(null));
+      this.testListeners.set(key, listener);
+    });
   }
 
   /** Agent-chain triggers: another agent finished. */

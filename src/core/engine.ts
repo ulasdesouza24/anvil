@@ -33,6 +33,13 @@ export interface ExecuteOptions {
   replay?: Record<string, { output: unknown; ports: string[] }>;
   /** Called with the full output of each step that finished (the checkpoint of a waiting run). */
   onNodeDone?: (nodeId: string, output: unknown, ports: string[]) => void;
+  /**
+   * Pinned data of the workflow editor (docs/WORKFLOW_EDITOR.md): the engine does not run these steps.
+   * It uses the given output and ports. Ports default to the success ports of the step.
+   */
+  pinned?: Record<string, { output: unknown; ports?: string[] }>;
+  /** A partial run of the editor: only this step and the steps before it run. The output of the run is the output of this step. */
+  targetNodeId?: string;
 }
 
 export interface ExecuteResult {
@@ -118,6 +125,19 @@ export async function executeAgent(spec: AgentSpec, rawInput: unknown, deps: Eng
   const g = buildGraph(spec);
   const { order } = topoSort(g);
   const nodes = new Map(spec.nodes.map((n) => [n.id, n]));
+  // A partial run: the target and its ancestors. Other steps stay pending.
+  let inScope: Set<string> | undefined;
+  if (opts.targetNodeId) {
+    inScope = new Set([opts.targetNodeId]);
+    const queue = [opts.targetNodeId];
+    while (queue.length) {
+      for (const e of g.incoming.get(queue.shift()!) ?? []) {
+        if (inScope.has(e.from)) continue;
+        inScope.add(e.from);
+        queue.push(e.from);
+      }
+    }
+  }
   const status: Record<string, NodeStatus> = Object.fromEntries(spec.nodes.map((n) => [n.id, "pending" as NodeStatus]));
   const edgeState = new Map<Edge, "pending" | "active" | "dead">(spec.edges.map((e) => [e, "pending"]));
   const scope: Scope & { nodes: Record<string, { output: unknown }> } = { input: undefined, nodes: {} };
@@ -140,6 +160,7 @@ export async function executeAgent(spec: AgentSpec, rawInput: unknown, deps: Eng
   };
 
   if (depth > MAX_DEPTH) return finish("failed", null, `Maximum agent nesting depth (${MAX_DEPTH}) exceeded`);
+  if (opts.targetNodeId && !nodes.has(opts.targetNodeId)) return finish("failed", null, `Unknown target step "${opts.targetNodeId}"`);
 
   const expanded = expandFileRefs(rawInput, deps.services.files);
   const prepared = prepareInput(spec.inputSchema, expanded.value);
@@ -165,6 +186,24 @@ export async function executeAgent(spec: AgentSpec, rawInput: unknown, deps: Eng
     const cls = deps.registry.get(node.type);
     if (!cls) {
       fatal = `Unknown node type "${node.type}" on node "${id}"`;
+      return;
+    }
+    if (node.disabled) {
+      // A disabled step (docs/WORKFLOW_EDITOR.md): no execution, an empty output, and only the "out" edges stay active.
+      status[id] = "skipped";
+      resolveOutgoing(id, new Set(deps.registry.portsOf(node).includes("out") ? ["out"] : []));
+      emit({ type: "node.skipped", nodeId: id, reason: "disabled" });
+      return;
+    }
+    const pin = opts.pinned?.[id];
+    if (pin) {
+      const ports = pin.ports ?? deps.registry.portsOf(node).filter((p) => p !== "error");
+      nodeOutputs[id] = pin.output;
+      scope.nodes[id] = { output: pin.output };
+      status[id] = "done";
+      resolveOutgoing(id, new Set(ports));
+      emit({ type: "node.completed", nodeId: id, output: truncate(pin.output), ports, usage: emptyUsage(), durationMs: 0 });
+      emit({ type: "log", nodeId: id, level: "info", message: "pinned: the step did not run, and the run uses its pinned output" });
       return;
     }
     const replayed = opts.replay?.[id];
@@ -313,7 +352,7 @@ export async function executeAgent(spec: AgentSpec, rawInput: unknown, deps: Eng
     while (changed) {
       changed = false;
       for (const id of order) {
-        if (status[id] !== "pending" || running.has(id)) continue;
+        if (status[id] !== "pending" || running.has(id) || (inScope && !inScope.has(id))) continue;
         const inc = g.incoming.get(id) ?? [];
         if (inc.some((e) => edgeState.get(e) === "pending")) continue;
         if (inc.length && !inc.some((e) => edgeState.get(e) === "active")) {
@@ -346,6 +385,11 @@ export async function executeAgent(spec: AgentSpec, rawInput: unknown, deps: Eng
     return finish("failed", null, reason);
   }
 
+  if (opts.targetNodeId) {
+    const t = opts.targetNodeId;
+    if (status[t] === "skipped") emit({ type: "log", nodeId: t, level: "warn", message: "the target step did not run: no active branch comes to it" });
+    return finish("completed", nodeOutputs[t] ?? null);
+  }
   const out = order.find((id) => nodes.get(id)!.type === "output" && status[id] === "done");
   if (!out) {
     emit({ type: "log", level: "warn", message: "No output node executed (every branch leading to an output was skipped)" });

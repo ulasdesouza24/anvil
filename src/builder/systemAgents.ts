@@ -346,6 +346,44 @@ export const REFINER_SPEC: AgentSpec = {
   meta: { system: true },
 };
 
+/**
+ * The AI assistant of the workflow editor (docs/WORKFLOW_EDITOR.md). It changes a draft spec from an instruction
+ * and compiles it. It does not test or publish: a person sees the change on the canvas, then accepts or rejects it.
+ */
+export const ASSISTANT_SPEC: AgentSpec = {
+  specVersion: "anvil/v1",
+  id: "anvil-assistant",
+  name: "Anvil Workflow Assistant",
+  description: "Changes a draft of the workflow editor from a plain-language instruction and compiles it. A person accepts or rejects the change.",
+  version: 1,
+  inputSchema: {
+    type: "object",
+    properties: {
+      spec: { type: "object", description: "The draft spec" },
+      instruction: { type: "string", description: "The change to make" },
+    },
+    required: ["spec", "instruction"],
+  },
+  nodes: [
+    { id: "input", type: "input", name: "Draft + instruction", config: {} },
+    {
+      id: "edit",
+      type: "anvil_edit",
+      name: "Edit + Compile",
+      description: "JSON-patch the draft from the instruction, then recompile. Locked steps do not change.",
+      config: { spec: "{{input.spec}}", instruction: "{{input.instruction}}" },
+    },
+    { id: "output", type: "output", name: "Proposal", config: { value: { spec: "{{nodes.edit.output.spec}}", summary: "{{nodes.edit.output.summary}}" } } },
+  ],
+  edges: [
+    { from: "input", to: "edit" },
+    { from: "edit", to: "output" },
+  ],
+  policy: systemPolicy,
+  tests: [],
+  meta: { system: true },
+};
+
 export const EVALUATOR_SPEC: AgentSpec = {
   specVersion: "anvil/v1",
   id: "anvil-evaluator",
@@ -513,4 +551,4 @@ export const BEST_OF_SPEC: AgentSpec = {
   meta: { system: true },
 };
 
-export const SYSTEM_AGENTS = [BUILDER_SPEC, REFINER_SPEC, EVALUATOR_SPEC, EVOLVER_SPEC, CLASSSMITH_SPEC, BEST_OF_SPEC];
+export const SYSTEM_AGENTS = [BUILDER_SPEC, REFINER_SPEC, ASSISTANT_SPEC, EVALUATOR_SPEC, EVOLVER_SPEC, CLASSSMITH_SPEC, BEST_OF_SPEC];

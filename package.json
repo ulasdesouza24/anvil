@@ -35,11 +35,14 @@
     "nanoid": "^6.0.1",
     "nodemailer": "^7.0.13",
     "playwright-core": "^1.63.0",
+    "quickjs-emscripten": "^0.31.0",
+    "undici": "^6.21.3",
     "unpdf": "^1.8.1",
     "yaml": "^2.9.1",
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@codemirror/lang-javascript": "^6.2.5",
     "@codemirror/lang-json": "^6.0.2",
     "@dagrejs/dagre": "^3.1.1",
     "@fontsource-variable/inter": "^5.3.0",

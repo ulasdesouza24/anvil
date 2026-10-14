@@ -130,7 +130,7 @@ describe.skipIf(!image)("tool bridge (real Docker)", () => {
     hits.length = 0;
     const code = `from anvil import tools, result, ToolError\ntry:\n    tools.http_request(url="${base}/items", method="POST", body={"a": 1})\nexcept ToolError as e:\n    result(str(e))`;
     const r = await anvil.runs.run({ spec: spec(code, ["http_request"]) }, {}, { kind: "eval", humanMode: "auto" });
-    expect(String((r.output as Out).result)).toMatch(/Evaluation runs never send data out/);
+    expect(String((r.output as Out).result)).toMatch(/Evaluation runs and dry runs never send data out/);
     expect(hits).toHaveLength(0);
     await anvil.sandbox.close();
   }, 120_000);

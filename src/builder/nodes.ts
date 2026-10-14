@@ -2,6 +2,7 @@ import jsonpatch from "fast-json-patch";
 import { z } from "zod";
 import type { NodeClass, NodeContext } from "../core/registry.js";
 import { REPLY_FIELDS } from "../core/types.js";
+import { carryLayout, lockedViolations, restoreLocked, withoutLayout } from "../core/workflow.js";
 import type { AgentSpec, EvaluationReport, JSONSchema, TestCase, TestResult } from "../core/types.js";
 import { schemaErrors } from "../llm/brain.js";
 import { agentOutputSchema, checkPathProblem } from "../core/validator.js";
@@ -1419,6 +1420,7 @@ export const AnvilEvolveNode: NodeClass<z.infer<typeof EvolveConfig>> = {
 - Do not change the tests. Keep the agent general. Do not put test answers in the spec.
 - During the tests, human_approval steps are approved automatically and human_input steps are skipped.
 - NEVER remove or go around human_approval gates or side-effect safeguards to make a test pass. When a test needs that, let it fail.
+- NEVER change or remove a step with "locked": true. A person owns it. Change the steps around it.
 - Keep each source URL that the request names. Change it only when the trace shows that the URL does not give the data.
 - Keep the sources of the SOURCE PLAN. They are tested. When one fails, use one of its fallbacks, not a new source.
 - Do not change what the agent does for the person to pass a test: keep the filters, the thresholds, the units, and the meaning of each output field. When a test asks for such a change, say so in the diagnosis and do not make the change.
@@ -1477,7 +1479,20 @@ export const AnvilEvolveNode: NodeClass<z.infer<typeof EvolveConfig>> = {
           history.push({ round, score: best.report.score, passRate: best.report.passRate, accepted: false, change: `candidate did not compile: ${critique.changes.join("; ")}` });
           continue;
         }
-        const candidate: AgentSpec = { ...compiled.spec, id: best.spec.id, tests, meta: best.spec.meta };
+        const candidate: AgentSpec = carryLayout(best.spec, { ...compiled.spec, id: best.spec.id, tests, meta: best.spec.meta });
+        // Invariant (docs/WORKFLOW_EDITOR.md): evolution never changes a step that a person locked.
+        const lockedHit = lockedViolations(best.spec, candidate);
+        if (lockedHit.length) {
+          ctx.log(`round ${round}: candidate changes locked step(s) ${lockedHit.join(", ")} — rejected`, undefined, "warn");
+          history.push({
+            round,
+            score: best.report.score,
+            passRate: best.report.passRate,
+            accepted: false,
+            change: `rejected (changes locked steps ${lockedHit.join(", ")}): ${critique.changes.join("; ")}`,
+          });
+          continue;
+        }
         // Safety invariant: evolution may never remove human approval gates.
         const gates = (x: AgentSpec) => x.nodes.filter((n) => n.type === "human_approval").length;
         if (gates(candidate) < gates(best.spec)) {
@@ -1723,14 +1738,18 @@ export const AnvilEditNode: NodeClass<z.infer<typeof EditConfig>> = {
   async execute(ctx) {
     const spec = ctx.config.spec as AgentSpec;
     const reg = ctx.services.registry;
+    const locked = spec.nodes.filter((n) => n.locked).map((n) => n.id);
+    const lockRule = locked.length ? `\n- Do not change or remove these locked steps: ${locked.join(", ")}. A person owns them. You can add edges to them and from them.` : "";
+    // The model sees no canvas positions. The positions of the steps that stay come back after the edit.
+    const shown = JSON.stringify({ ...withoutLayout(spec), meta: undefined });
     const out = await ctx.brain.json<{ summary: string; operations: jsonpatch.Operation[]; addTests: Omit<TestCase, "id">[]; removeTestIds: string[] }>({
       purpose: "edit agent",
       tier: "balanced",
       system: `You change Anvil agent specs as a change request tells you. Use RFC 6902 JSON Patch operations. The paths are JSON pointers, for example /nodes/2/config/prompt, /nodes/-, or /edges/-.
 - Make all the necessary changes: new nodes, edges, prompts, inputSchema fields, and output fields. Keep all other parts as they are.
 - When the behavior changes, also change the test suite. Add tests for the new behavior. Remove the tests that do not apply now.
-- Write each new or changed prompt in STE.\n\n${STE_RULES}\n\n${IR_GUIDE}\n\nNODE CATALOG:\n${reg.catalog()}\n\nNODE REFERENCE:\n${nodeDocs(reg, reg.types())}`,
-      user: `CURRENT SPEC:\n${JSON.stringify({ ...spec, meta: undefined })}\n\nCHANGE REQUEST:\n${ctx.config.instruction}`,
+- Write each new or changed prompt in STE.${lockRule}\n\n${STE_RULES}\n\n${IR_GUIDE}\n\nNODE CATALOG:\n${reg.catalog()}\n\nNODE REFERENCE:\n${nodeDocs(reg, reg.types())}`,
+      user: `CURRENT SPEC:\n${shown}\n\nCHANGE REQUEST:\n${ctx.config.instruction}`,
       schema: {
         type: "object",
         properties: {
@@ -1764,10 +1783,16 @@ export const AnvilEditNode: NodeClass<z.infer<typeof EditConfig>> = {
       patched = await ctx.brain.json({
         purpose: "edit agent (rewrite)",
         tier: "balanced",
-        system: `Return the COMPLETE modified Anvil agent spec JSON.\n\n${IR_GUIDE}\n\nNODE REFERENCE:\n${nodeDocs(reg, reg.types())}`,
-        user: `CURRENT SPEC:\n${JSON.stringify({ ...spec, meta: undefined })}\n\nCHANGE REQUEST:\n${ctx.config.instruction}`,
+        system: `Return the COMPLETE modified Anvil agent spec JSON.${lockRule}\n\n${IR_GUIDE}\n\nNODE REFERENCE:\n${nodeDocs(reg, reg.types())}`,
+        user: `CURRENT SPEC:\n${shown}\n\nCHANGE REQUEST:\n${ctx.config.instruction}`,
         maxTokens: 16000,
       });
+    }
+    // A locked step comes back as it was, before the compiler checks the result (docs/WORKFLOW_EDITOR.md).
+    if (locked.length && patched && typeof patched === "object" && Array.isArray((patched as AgentSpec).nodes)) {
+      const hit = lockedViolations(spec, patched as AgentSpec);
+      if (hit.length) ctx.log(`the change touched locked step(s) ${hit.join(", ")}: they stay as they were`, undefined, "warn");
+      patched = restoreLocked(spec, patched as AgentSpec);
     }
     artifact(ctx, "spec", { stage: "draft", spec: patched });
     const outcome = await validateAndRepair(patched, {
@@ -1791,6 +1816,8 @@ export const AnvilEditNode: NodeClass<z.infer<typeof EditConfig>> = {
       },
     });
     if (!outcome.spec) throw new Error(`Edited spec does not compile:\n${formatDiagnostics(outcome.result.diagnostics)}`);
+    const lockedHit = lockedViolations(spec, outcome.spec);
+    if (lockedHit.length) throw new Error(`The change needs a change of the locked step(s) ${lockedHit.join(", ")}. Unlock them in the workflow editor, or give another instruction.`);
     const kept = (spec.tests ?? []).filter((x) => !out.removeTestIds.includes(x.id));
     const added: TestCase[] = out.addTests.map((x, i) => ({
       id: `t${kept.length + i + 1}_${Date.now().toString(36).slice(-3)}`,
@@ -1802,7 +1829,7 @@ export const AnvilEditNode: NodeClass<z.infer<typeof EditConfig>> = {
     const tests = [...kept, ...added].filter((x) => !schemaErrors(outcome.spec!.inputSchema, x.input).length);
     const before = new Set((spec.triggers ?? []).map((tr) => tr.id));
     const next: AgentSpec = {
-      ...outcome.spec,
+      ...carryLayout(spec, outcome.spec),
       id: spec.id,
       tests,
       // The refiner keeps the definition of done when the model does not give a new one.

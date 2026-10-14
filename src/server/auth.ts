@@ -1,7 +1,10 @@
 import crypto from "node:crypto";
 
-/** Paths that never need the API token: the health check, and webhooks (they have their own trigger token). */
-const OPEN = [/^\/api\/health$/, /^\/api\/hooks\//];
+/**
+ * Paths that never need the API token or a session: the health check, the public app info, sign-up and sign-in,
+ * and webhooks (they have their own trigger token).
+ */
+export const OPEN = [/^\/api\/health$/, /^\/api\/app$/, /^\/api\/auth\/(login|register)$/, /^\/api\/hooks\//];
 
 const same = (a: string, b: string) => a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
@@ -14,7 +17,11 @@ const STREAM = /\/events$/;
  */
 export function apiTokenOk(token: string, path: string, header: (name: string) => string | undefined, query: (name: string) => string | undefined): boolean {
   if (!token || OPEN.some((re) => re.test(path))) return true;
+  return same(tokenOf(path, header, query) ?? "", token);
+}
+
+/** The token of a request: "Authorization: Bearer", "X-Anvil-Token", or "?token=" for an event stream. */
+export function tokenOf(path: string, header: (name: string) => string | undefined, query: (name: string) => string | undefined): string | undefined {
   const bearer = /^Bearer\s+(.+)$/i.exec(header("authorization") ?? "")?.[1];
-  const given = bearer ?? header("x-anvil-token") ?? (STREAM.test(path) ? query("token") : undefined) ?? "";
-  return same(given, token);
+  return bearer ?? header("x-anvil-token") ?? (STREAM.test(path) ? query("token") : undefined);
 }

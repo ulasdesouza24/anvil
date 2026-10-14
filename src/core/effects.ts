@@ -58,6 +58,12 @@ export function effectKey(rootRunId: string, nodeId: string, type: string, args:
     .digest("hex");
 }
 
+/** True when an action with a side effect must not go out: an evaluation run, or a dry run of the workflow editor. */
+export const isDryRun = (s: { runKind?: string; dryRun?: boolean }): boolean => s.runKind === "eval" || !!s.dryRun;
+
+/** The output of an action that a dry run did not do (docs/WORKFLOW_EDITOR.md). */
+export const dryRunOutput = (type: string, args: unknown) => ({ dryRun: true, action: type, preview: args });
+
 let writes = 0;
 
 async function prune(ctx: NodeContext<unknown>, ttlMs: number) {
@@ -69,8 +75,14 @@ async function prune(ctx: NodeContext<unknown>, ttlMs: number) {
 /**
  * Runs one action with a side effect under the effect record. The engine reads ctx.effects:
  * a step that did an action does not run again after an error.
+ * In a dry run of the workflow editor, the action does not go out and gives a preview.
+ * opts.local: the action stays inside Anvil (a mock tool, sandboxed code), so a dry run does it.
  */
-export async function runEffect<T>(ctx: NodeContext<unknown>, type: string, args: unknown, fn: () => Promise<T>): Promise<T> {
+export async function runEffect<T>(ctx: NodeContext<unknown>, type: string, args: unknown, fn: () => Promise<T>, opts: { local?: boolean } = {}): Promise<T> {
+  if (ctx.services.dryRun && !opts.local) {
+    ctx.log?.(`${type}: dry run, the action did not go out`, args, "warn");
+    return dryRunOutput(type, args) as T;
+  }
   const counter = ctx.effects;
   if (!counter?.seq || !ctx.node) return fn();
   const eval_ = ctx.services.runKind === "eval";

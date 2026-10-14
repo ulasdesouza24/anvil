@@ -1,4 +1,5 @@
 import { canonicalArgs } from "../context.js";
+import { isDryRun } from "../effects.js";
 import { checkEgress, domainAllowed, findSecret, hostOf, hostSecretValues, type EgressPolicy } from "../egress.js";
 import type { NodeContext } from "../registry.js";
 import type { AgentSpec } from "../types.js";
@@ -71,7 +72,7 @@ export function egressPolicyFor(ctx: NodeContext<any>): EgressPolicy {
   const allow = new Set<string>([...fixed.plan, ...fixed.request, ...fixed.approved]);
   for (const d of searchDomains.get(ctx.runId) ?? []) allow.add(d);
   allow.delete("");
-  return { allowDomains: allow, maxBody: ctx.brain.config.sandbox.egressMaxBody, evaluation: ctx.services.runKind === "eval", secretValues: hostSecretValues() };
+  return { allowDomains: allow, maxBody: ctx.brain.config.sandbox.egressMaxBody, evaluation: isDryRun(ctx.services), secretValues: hostSecretValues() };
 }
 
 /** Runs one program of an agent in the sandbox of its run. */

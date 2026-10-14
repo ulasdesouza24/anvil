@@ -1,6 +1,7 @@
+import { currentEnv } from "../scope.js";
 import nodemailer from "nodemailer";
 import { z } from "zod";
-import { NotSentError, runEffect } from "../effects.js";
+import { isDryRun, NotSentError, runEffect } from "../effects.js";
 import type { NodeClass, NodeContext } from "../registry.js";
 
 /**
@@ -11,7 +12,7 @@ import type { NodeClass, NodeContext } from "../registry.js";
 
 /** A value of a secret variable. A missing variable stops the step with the name to set. */
 function secretOf(name: string, what: string): string {
-  const v = process.env[name];
+  const v = currentEnv()[name];
   if (!v) throw new Error(`Set the secret ${name} (${what}) on the Connections page or in .env`);
   return v;
 }
@@ -21,8 +22,8 @@ function withSecrets(headers: Record<string, string> = {}): Record<string, strin
   return Object.fromEntries(Object.entries(headers).map(([k, v]) => [k, v.replace(/\$\{([A-Z0-9_]+)\}/g, (_, n: string) => secretOf(n, `header ${k}`))]));
 }
 
-/** An evaluation run (tests, evolve, a health check) never sends: the result shows what it would send. */
-const dryRun = (ctx: NodeContext<unknown>) => ctx.services.runKind === "eval";
+/** An evaluation run (tests, evolve, a health check) and a dry run of the editor never send: the result shows what it would send. */
+const dryRun = (ctx: NodeContext<unknown>) => isDryRun(ctx.services);
 
 /**
  * One POST. The Idempotency-Key header lets a receiver drop a second copy (docs/EFFECTS.md).
@@ -139,12 +140,13 @@ export const SendEmailNode: NodeClass<z.infer<typeof EmailConfig>> = {
     const preview = `${c.subject}\n\n${c.text}`.slice(0, 500);
     if (dryRun(ctx)) return { output: { sent: false, channel: "email", to, dryRun: true, preview } };
     const p = c.smtp;
-    const port = Number(process.env[`${p}_PORT`] ?? 587);
+    const env = currentEnv();
+    const port = Number(env[`${p}_PORT`] ?? 587);
     const transport = nodemailer.createTransport({
       host: secretOf(`${p}_HOST`, "the SMTP server"),
       port,
-      secure: (process.env[`${p}_SECURE`] ?? String(port === 465)) === "true",
-      ...(process.env[`${p}_USER`] ? { auth: { user: process.env[`${p}_USER`]!, pass: secretOf(`${p}_PASSWORD`, "the SMTP password") } } : {}),
+      secure: (env[`${p}_SECURE`] ?? String(port === 465)) === "true",
+      ...(env[`${p}_USER`] ? { auth: { user: env[`${p}_USER`]!, pass: secretOf(`${p}_PASSWORD`, "the SMTP password") } } : {}),
     });
     const from = secretOf(`${p}_FROM`, "the sender address");
     return runEffect(ctx, "send_email", c, async () => {

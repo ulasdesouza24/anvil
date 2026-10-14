@@ -1,3 +1,4 @@
+import { dryRunOutput } from "../effects.js";
 import { liveCacheKind, liveFetch } from "../liveFetch.js";
 import { z } from "zod";
 import type { NodeClass } from "../registry.js";
@@ -35,6 +36,11 @@ export const HttpNode: NodeClass<HttpConfig> = {
   async execute(ctx) {
     const c = ctx.config;
     const url = new URL(String(c.url));
+    if (ctx.services.dryRun && c.method !== "GET") {
+      // A dry run of the editor (docs/WORKFLOW_EDITOR.md): a request that changes something does not go out.
+      ctx.log(`${c.method} ${url.host}: dry run, the request did not go out`, undefined, "warn");
+      return { output: { status: 0, ok: true, headers: {}, body: dryRunOutput("http", { method: c.method, url: url.toString(), body: c.body }) } };
+    }
     for (const [k, v] of Object.entries(c.query ?? {})) if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
     const hasBody = c.body !== undefined && c.method !== "GET";
     const res = await liveFetch(
@@ -252,8 +258,14 @@ export const BrowserNode: NodeClass<z.infer<typeof BrowserConfig>> = {
   async execute(ctx) {
     if (!ctx.services.browser) throw new Error("The browser is not available in this runtime");
     const c = ctx.config;
+    let actions = c.actions;
+    if (ctx.services.dryRun && actions?.some((a) => a.type === "fill" || a.type === "press")) {
+      // A dry run of the editor (docs/WORKFLOW_EDITOR.md): the page opens, but no form gets data.
+      actions = actions.filter((a) => a.type !== "fill" && a.type !== "press");
+      ctx.log("dry run: the browser did not do the fill and press actions", undefined, "warn");
+    }
     const r = await ctx.services.browser.browse(
-      { url: String(c.url), waitFor: c.waitFor, waitMs: c.waitMs, actions: c.actions, captureNetwork: c.captureNetwork, maxChars: c.maxChars },
+      { url: String(c.url), waitFor: c.waitFor, waitMs: c.waitMs, actions, captureNetwork: c.captureNetwork, maxChars: c.maxChars },
       ctx.signal,
     );
     if (r.blocked) ctx.log(`page blocked: ${r.blocked.reason}`, { url: c.url }, "warn");

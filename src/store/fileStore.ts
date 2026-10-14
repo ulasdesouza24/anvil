@@ -4,7 +4,23 @@ import path from "node:path";
 import type { AgentStoreLike, KVStore } from "../core/registry.js";
 import type { AgentSpec, EvaluationReport, RunRecord, StoredAgent } from "../core/types.js";
 
-export type RunSummary = Omit<RunRecord, "events" | "nodeStates" | "input" | "output"> & { inputPreview?: string };
+export type RunSummary = Omit<RunRecord, "events" | "nodeStates" | "input" | "output" | "stepData"> & { inputPreview?: string };
+
+/**
+ * The unsaved work of the workflow editor for one agent (docs/WORKFLOW_EDITOR.md). It is not a version:
+ * runs, triggers and the API use the saved versions only.
+ */
+export interface WorkflowDraft {
+  agentId: string;
+  /** The version that the draft started from. A save checks that no newer version came after it. */
+  baseVersion: number;
+  spec: AgentSpec;
+  /** Pinned outputs of steps for test runs of the editor. They never go into a version. */
+  pinData?: Record<string, { output: unknown; ports?: string[] }>;
+  /** The input of the last test run of the editor. */
+  testInput?: unknown;
+  updatedAt: number;
+}
 
 /** Serializes writes per file and writes atomically (tmp + rename). */
 class Writer {
@@ -34,7 +50,7 @@ class Writer {
 }
 
 function summarize(r: RunRecord): RunSummary {
-  const { events: _e, nodeStates: _n, input, output: _o, ...rest } = r;
+  const { events: _e, nodeStates: _n, input, output: _o, stepData: _s, ...rest } = r;
   const preview = JSON.stringify(input ?? {});
   return { ...rest, inputPreview: preview.length > 160 ? `${preview.slice(0, 160)}…` : preview };
 }
@@ -63,6 +79,7 @@ export class FileStore implements AgentStoreLike, KVStore {
   readonly runsDir: string;
   readonly kvDir: string;
   readonly classesDir: string;
+  readonly draftsDir: string;
   private classDefs = new Map<string, Record<string, unknown>>();
 
   constructor(readonly dir: string) {
@@ -70,10 +87,11 @@ export class FileStore implements AgentStoreLike, KVStore {
     this.runsDir = path.join(dir, "runs");
     this.kvDir = path.join(dir, "kv");
     this.classesDir = path.join(dir, "classes");
+    this.draftsDir = path.join(dir, "drafts");
   }
 
   init(): this {
-    for (const d of [this.agentsDir, this.runsDir, this.kvDir, this.classesDir]) fs.mkdirSync(d, { recursive: true });
+    for (const d of [this.agentsDir, this.runsDir, this.kvDir, this.classesDir, this.draftsDir]) fs.mkdirSync(d, { recursive: true });
     for (const f of fs.readdirSync(this.classesDir)) {
       if (!f.endsWith(".json")) continue;
       try {
@@ -231,6 +249,40 @@ export class FileStore implements AgentStoreLike, KVStore {
     this.agents.delete(id);
     await this.writer.flush();
     await fsp.rm(path.join(this.agentsDir, `${id}.json`), { force: true });
+    await fsp.rm(this.draftFile(id), { force: true });
+    return true;
+  }
+
+  /** The highest version number of an agent (a saved version can be newer than the current version). */
+  latestVersion(id: string): number | undefined {
+    const a = this.agents.get(id);
+    return a ? Math.max(...a.versions.map((v) => v.version)) : undefined;
+  }
+
+  /* ------------------------- drafts (docs/WORKFLOW_EDITOR.md) ------------------------- */
+
+  private draftFile(id: string) {
+    return path.join(this.draftsDir, `${id}.json`);
+  }
+
+  async getDraft(id: string): Promise<WorkflowDraft | undefined> {
+    try {
+      return JSON.parse(await fsp.readFile(this.draftFile(id), "utf8")) as WorkflowDraft;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async saveDraft(draft: WorkflowDraft): Promise<WorkflowDraft> {
+    await this.writer.write(this.draftFile(draft.agentId), draft);
+    return draft;
+  }
+
+  async deleteDraft(id: string): Promise<boolean> {
+    await this.writer.flush();
+    const file = this.draftFile(id);
+    if (!fs.existsSync(file)) return false;
+    await fsp.rm(file, { force: true });
     return true;
   }
 

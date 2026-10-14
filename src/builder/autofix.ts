@@ -1,4 +1,7 @@
-import { NODE_ID } from "../core/types.js";
+import { NODE_ID, NodeInstanceZ } from "../core/types.js";
+
+/** The fields of a step in the IR. Each other top-level field of a model step is a config field or a leak. */
+const NODE_FIELDS = new Set(Object.keys(NodeInstanceZ.shape));
 import { wrapBareRefs } from "../core/nodes/codeAgent.js";
 
 export interface AutoFix {
@@ -70,7 +73,7 @@ export function autoFix(raw: unknown, defaults: AutoFixOptions = {}): AutoFix {
     // planning fields (dependsOn, branch, purpose…) into it.
     const allowed = defaults.configKeys?.(String(n.type));
     for (const k of Object.keys(n)) {
-      if (["id", "type", "name", "description", "config", "retry", "timeoutMs", "position"].includes(k)) continue;
+      if (NODE_FIELDS.has(k)) continue;
       if (allowed ? allowed.includes(k) : true) {
         if (n.config[k] === undefined) {
           n.config[k] = n[k];

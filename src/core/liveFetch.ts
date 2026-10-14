@@ -1,3 +1,4 @@
+import { currentEnv, currentScope, type WorkspaceScope } from "./scope.js";
 import type { LiveConfig } from "./config.js";
 
 /**
@@ -39,13 +40,18 @@ const RETRY_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 /** Host headers from the UI (docs/SECRETS.md). They come after ANVIL_HOST_HEADERS: a header of the UI wins. */
 let extraHostHeaders: Record<string, Record<string, string>> = {};
-export function setExtraHostHeaders(h: Record<string, Record<string, string>>): void {
-  extraHostHeaders = Object.fromEntries(Object.entries(h).map(([k, v]) => [k.toLowerCase(), { ...v }]));
+/** The host headers from the UI. In a workspace scope (docs/HOSTING.md), they belong to that workspace only. */
+const globalHostHeaders = () => extraHostHeaders;
+export function setExtraHostHeaders(h: Record<string, Record<string, string>>, scope?: WorkspaceScope): void {
+  const next = Object.fromEntries(Object.entries(h).map(([k, v]) => [k.toLowerCase(), { ...v }]));
+  if (scope) scope.hostHeaders = next;
+  else extraHostHeaders = next;
 }
 
 /** Header values can name environment variables: ${GITHUB_TOKEN}. A header with a missing variable is not sent. */
-export function hostHeadersFor(host: string, cfg: Pick<LiveConfig, "hostHeaders">, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+export function hostHeadersFor(host: string, cfg: Pick<LiveConfig, "hostHeaders">, env: Record<string, string | undefined> = currentEnv()): Record<string, string> {
   const h = host.toLowerCase();
+  const extraHostHeaders = currentScope()?.hostHeaders ?? globalHostHeaders();
   const raw = cfg.hostHeaders[h] || extraHostHeaders[h] ? { ...(cfg.hostHeaders[h] ?? {}), ...(extraHostHeaders[h] ?? {}) } : undefined;
   if (!raw) return {};
   const out: Record<string, string> = {};

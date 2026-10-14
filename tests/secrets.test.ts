@@ -40,10 +40,10 @@ describe("secret encryption", () => {
 describe("the secret service", () => {
   it("stores values encrypted, puts them into the environment, and removes only its own names", () => {
     const dir = tmpDir();
-    const env: NodeJS.ProcessEnv = { OTHER_TOKEN: "from-env-123456" }; // gitleaks:allow (a fake value for the test)
+    const env: NodeJS.ProcessEnv = { OTHER_TOKEN: "from-env-123456" };
     const s = new SecretService(dir, KEY, env).load();
     expect(s.enabled).toBe(true);
-    s.set("GITHUB_TOKEN", "ghp_abcdefghijklmnop1234"); // gitleaks:allow (a fake value for the test)
+    s.set("GITHUB_TOKEN", "ghp_abcdefghijklmnop1234");
     expect(env.GITHUB_TOKEN).toBe("ghp_abcdefghijklmnop1234");
     const file = fs.readFileSync(path.join(dir, "secrets.enc.json"), "utf8");
     expect(file).not.toContain("ghp_abcdefghijklmnop1234");

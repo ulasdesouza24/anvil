@@ -190,6 +190,15 @@ export interface AnvilConfig {
   host: string;
   /** When set, each /api and /mcp request must give this token (Authorization: Bearer, X-Anvil-Token, or ?token= for event streams). */
   apiToken: string;
+  /**
+   * The hosted mode (docs/HOSTING.md): accounts, one workspace for each user, the OpenRouter key of each user,
+   * and a network guard. Off: the local, single-user Anvil.
+   */
+  hosted: boolean;
+  /** The web origins that can call the API from a browser (the address of the web app, for example on Vercel). */
+  corsOrigins: string[];
+  /** The public address of the API (for webhook URLs), for example https://anvil-api.example.com. */
+  publicUrl: string;
   dataDir: string;
   /** Jev confidence below this escalates the decision to a reasoning model (System 2). */
   confidenceThreshold: number;
@@ -444,6 +453,12 @@ export function loadConfig(): AnvilConfig {
     port: num("ANVIL_PORT", 8787),
     host: process.env.ANVIL_HOST || "127.0.0.1",
     apiToken: process.env.ANVIL_API_TOKEN ?? "",
+    hosted: ["on", "true", "1"].includes((process.env.ANVIL_HOSTED ?? "").toLowerCase()),
+    corsOrigins: (process.env.ANVIL_CORS_ORIGINS ?? "")
+      .split(",")
+      .map((o) => o.trim().replace(/\/+$/, ""))
+      .filter(Boolean),
+    publicUrl: (process.env.ANVIL_PUBLIC_URL ?? "").replace(/\/+$/, ""),
     dataDir: path.resolve(process.env.ANVIL_DATA_DIR || path.join(projectRoot, "data")),
     confidenceThreshold: num("ANVIL_CONFIDENCE_THRESHOLD", 0.6),
     evolveTarget: num("ANVIL_EVOLVE_TARGET", 0.85),

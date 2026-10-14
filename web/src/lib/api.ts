@@ -45,6 +45,10 @@ export interface RunSummary {
   usage: Usage;
   resultAgentId?: string;
   inputPreview?: string;
+  /** "editor": a test run of the workflow editor. */
+  origin?: "editor";
+  dryRun?: boolean;
+  targetNodeId?: string;
 }
 
 export interface Turn {
@@ -74,6 +78,7 @@ export interface ConverseResult {
 }
 
 export interface NodeClassInfo {
+  sideEffects?: boolean;
   type: string;
   title: string;
   category: string;
@@ -272,6 +277,129 @@ export interface SecretState {
   envHostHeaders: string[];
 }
 
+/* ------------------------- workflow editor (docs/WORKFLOW_EDITOR.md) ------------------------- */
+
+export type PinData = Record<string, { output: unknown; ports?: string[] }>;
+
+/** The unsaved work of the workflow editor for one agent. */
+export interface WorkflowDraft {
+  agentId: string;
+  baseVersion: number;
+  spec: AgentSpec;
+  pinData?: PinData;
+  testInput?: unknown;
+  updatedAt: number;
+}
+
+/** The static view of one step: its ports (with "error" last), its output fields, and if it changes the outside world. */
+export interface NodeInspection {
+  ports: string[];
+  outputSchema?: Record<string, unknown>;
+  sideEffects: boolean;
+  category?: string;
+  title?: string;
+}
+
+export interface Inspection {
+  valid: boolean;
+  errors: number;
+  warnings: number;
+  diagnostics: Diagnostic[];
+  nodes: Record<string, NodeInspection>;
+}
+
+export interface SpecDiff {
+  added: string[];
+  removed: string[];
+  changed: { id: string; fields: string[] }[];
+  moved: string[];
+  edgesAdded: AgentSpec["edges"];
+  edgesRemoved: AgentSpec["edges"];
+  fields: string[];
+}
+
+export interface MergeResult {
+  spec: AgentSpec;
+  conflicts: { kind: "node" | "field"; id: string }[];
+}
+
+/** The answer of a save that started from an older version (HTTP 409). */
+export interface SaveConflict {
+  error: string;
+  conflict: true;
+  baseVersion: number;
+  latestVersion: number;
+  merge?: MergeResult;
+  theirs: AgentSpec;
+}
+
+export interface TestWebhookEvent {
+  payload: unknown;
+  headers: Record<string, string>;
+  query: Record<string, string>;
+  /** The agent input that the trigger maps the event to. */
+  input: unknown;
+}
+
+export type WorkflowRunMode = "full" | "to_node" | "node_only";
+
+/* ------------------------- accounts, settings, bazaar (docs/HOSTING.md) ------------------------- */
+
+/** The API address. Empty: the same origin (the local Anvil, or a proxy). A web app on Vercel sets VITE_API_BASE. */
+export const API_BASE = ((import.meta.env.VITE_API_BASE as string | undefined) ?? "").replace(/\/+$/, "");
+
+export interface Account {
+  id: string;
+  username: string;
+  createdAt: number;
+}
+
+export interface SettingField {
+  path: string;
+  group: string;
+  label: string;
+  help: string;
+  type: "number" | "integer" | "boolean" | "enum" | "text" | "list";
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: string[];
+  unit?: string;
+}
+
+export interface Me {
+  hosted: boolean;
+  account: Account | null;
+  models: { llm: string; decision: string };
+  key: { configured: boolean; hint: string | null; fromEnv: boolean };
+  settings: { values: Record<string, unknown>; overrides: Record<string, unknown>; defaults: Record<string, unknown> };
+  fields: SettingField[];
+  groups: string[];
+}
+
+export interface ListingSummary {
+  id: string;
+  ownerId: string;
+  owner: string;
+  agentId: string;
+  version: number;
+  title: string;
+  description: string;
+  tags: string[];
+  createdAt: number;
+  updatedAt: number;
+  uses: number;
+  steps: number;
+  stepTypes: string[];
+  inputs: string[];
+}
+
+export interface Listing extends ListingSummary {
+  spec: AgentSpec;
+  classes: { type: string; title: string; kind: string; sideEffects: boolean }[];
+  mine: boolean;
+}
+
 const TOKEN_KEY = "anvilToken";
 
 export function getToken(): string | null {
@@ -300,8 +428,9 @@ export function clearToken(): void {
 
 export function withToken(url: string): string {
   const token = getToken();
-  if (!token) return url;
-  return `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
+  const full = `${API_BASE}${url}`;
+  if (!token) return full;
+  return `${full}${full.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
 }
 
 function authHeaders(): Record<string, string> {
@@ -313,17 +442,19 @@ function reportUnauthorized(status: number): void {
   if (status === 401) window.dispatchEvent(new Event("anvil:unauthorized"));
 }
 
-async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
-  const res = await fetch(url, {
+async function req<T>(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(`${API_BASE}${url}`, {
     method,
+    signal,
     headers: { ...authHeaders(), ...(body ? { "Content-Type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     reportUnauthorized(res.status);
-    const err = new Error((data as { error?: string }).error ?? `HTTP ${res.status}`) as Error & { data?: unknown };
+    const err = new Error((data as { error?: string }).error ?? `HTTP ${res.status}`) as Error & { data?: unknown; status?: number };
     err.data = data;
+    err.status = res.status;
     throw err;
   }
   return data as T;
@@ -349,7 +480,7 @@ export interface FileView {
 async function uploadFiles(list: File[]): Promise<FileView[]> {
   const form = new FormData();
   for (const f of list) form.append("file", f, f.name);
-  const res = await fetch("/api/files", { method: "POST", headers: authHeaders(), body: form });
+  const res = await fetch(`${API_BASE}/api/files`, { method: "POST", headers: authHeaders(), body: form });
   const data = (await res.json().catch(() => ({}))) as { files?: FileView[]; error?: string };
   if (!res.ok) {
     reportUnauthorized(res.status);
@@ -365,6 +496,50 @@ function health(agentId?: string): Promise<Health | AgentHealth> {
 }
 
 export const api = {
+  // Accounts, settings and the Agent Bazaar (docs/HOSTING.md, docs/BAZAAR.md).
+  app: () => req<{ hosted: boolean; decisionModel: string }>("GET", "/api/app"),
+  register: (username: string, password: string) => req<{ account: Account; token: string }>("POST", "/api/auth/register", { username, password }),
+  login: (username: string, password: string) => req<{ account: Account; token: string }>("POST", "/api/auth/login", { username, password }),
+  logoutAll: () => req<{ ok: true }>("POST", "/api/auth/logout-all"),
+  me: () => req<Me>("GET", "/api/me"),
+  saveSettings: (values: Record<string, unknown>) => req<Me>("PUT", "/api/me/settings", { values }),
+  saveKey: (apiKey: string) => req<Me>("PUT", "/api/me/key", { apiKey }),
+  saveUsername: (username: string) => req<Me>("PUT", "/api/me/username", { username }),
+  savePassword: (current: string, next: string) => req<{ token: string }>("PUT", "/api/me/password", { current, next }),
+  bazaar: (q: { q?: string; sort?: "new" | "popular"; mine?: boolean } = {}) =>
+    req<ListingSummary[]>(
+      "GET",
+      `/api/bazaar?${new URLSearchParams(
+        Object.entries(q)
+          .filter(([, v]) => v !== undefined && v !== "" && v !== false)
+          .map(([k, v]) => [k, String(v)]),
+      )}`,
+    ),
+  listing: (id: string) => req<Listing>("GET", `/api/bazaar/${id}`),
+  shareAgent: (body: { agentId: string; version?: number; title?: string; description?: string; tags?: string[] }) => req<ListingSummary>("POST", "/api/bazaar", body),
+  unshare: (id: string) => req<{ ok: true }>("DELETE", `/api/bazaar/${id}`),
+  useListing: (id: string) => req<{ agentId: string; classes: string[] }>("POST", `/api/bazaar/${id}/use`),
+  exportAgent: (id: string, version?: number) => req<AgentSpec>("GET", `/api/agents/${id}/export${version ? `?version=${version}` : ""}`),
+  // The workflow editor (docs/WORKFLOW_EDITOR.md).
+  inspect: (spec: AgentSpec) => req<Inspection>("POST", "/api/workflow/inspect", { spec }),
+  diffSpecs: (a: AgentSpec, b: AgentSpec) => req<SpecDiff>("POST", "/api/workflow/diff", { a, b }),
+  mergeSpecs: (base: AgentSpec, ours: AgentSpec, theirs: AgentSpec) => req<MergeResult>("POST", "/api/workflow/merge", { base, ours, theirs }),
+  createBlank: (name?: string) => req<AgentSummary>("POST", "/api/agents/blank", { name }),
+  draft: (agentId: string) => req<WorkflowDraft>("GET", `/api/agents/${agentId}/draft`),
+  saveDraft: (agentId: string, draft: Pick<WorkflowDraft, "spec" | "baseVersion"> & Partial<Pick<WorkflowDraft, "pinData" | "testInput">>) =>
+    req<{ ok: true; updatedAt: number; latestVersion: number }>("PUT", `/api/agents/${agentId}/draft`, draft),
+  discardDraft: (agentId: string) => req<{ deleted: boolean }>("DELETE", `/api/agents/${agentId}/draft`),
+  /** Saves the draft as a new version. A newer version than baseVersion throws an error with data: SaveConflict. */
+  publishDraft: (agentId: string, spec: AgentSpec, baseVersion: number, note?: string, force = false) =>
+    req<{ agent: AgentSummary; version: number }>("POST", `/api/agents/${agentId}/draft/save`, { spec, baseVersion, note, force }),
+  /** A test run of the draft. dryRun defaults to true: actions with a side effect give a preview. */
+  runWorkflow: (body: { agentId: string; spec: AgentSpec; input?: unknown; mode?: WorkflowRunMode; target?: string; pinData?: PinData; reuseRunId?: string; dryRun?: boolean }) =>
+    req<{ runId: string }>("POST", "/api/workflow/run", body),
+  /** The AI assistant: a run of anvil-assistant. Its output is {spec, summary}: the person accepts or rejects it. */
+  assist: (agentId: string, spec: AgentSpec, instruction: string, selection?: string[]) =>
+    req<{ runId: string }>("POST", "/api/workflow/assist", { agentId, spec, instruction, selection }),
+  listenWebhook: (agentId: string, triggerId: string, timeoutMs = 120_000, signal?: AbortSignal) =>
+    req<{ captured: boolean; event?: TestWebhookEvent }>("POST", `/api/agents/${agentId}/triggers/${triggerId}/listen`, { timeoutMs }, signal),
   uploadFiles,
   file: (id: string) => req<FileView>("GET", `/api/files/${id}`),
   deleteFile: (id: string) => req<{ deleted: boolean }>("DELETE", `/api/files/${id}`),
@@ -376,7 +551,7 @@ export const api = {
   agent: (id: string) => req<StoredAgent>("GET", `/api/agents/${id}`),
   validate: (spec: unknown) => req<ValidationResult>("POST", "/api/validate", { spec }),
   importAgent: (spec: unknown) => req<AgentSummary>("POST", "/api/agents", { spec }),
-  saveAgent: (id: string, spec: unknown, note?: string) => req<AgentSummary>("PUT", `/api/agents/${id}`, { spec, note }),
+  saveAgent: (id: string, spec: unknown, note?: string, baseVersion?: number) => req<AgentSummary>("PUT", `/api/agents/${id}`, { spec, note, baseVersion }),
   setCurrent: (id: string, version: number) => req<AgentSummary>("POST", `/api/agents/${id}/current`, { version }),
   deleteAgent: (id: string) => req<{ ok: boolean }>("DELETE", `/api/agents/${id}`),
   run: (id: string, input: unknown, version?: number) => req<{ runId: string }>("POST", `/api/agents/${id}/run`, { input, version }),
@@ -406,7 +581,8 @@ export const api = {
   refine: (id: string, instruction: string, optimize = false) => req<{ runId: string }>("POST", `/api/agents/${id}/refine`, { instruction, optimize }),
   evaluate: (id: string, version?: number) => req<{ runId: string }>("POST", `/api/agents/${id}/evaluate`, { version }),
   evolve: (id: string, rounds = 2) => req<{ runId: string }>("POST", `/api/agents/${id}/evolve`, { rounds }),
-  runs: (q: { agentId?: string; kind?: string; limit?: number; parent?: string } = {}) => {
+  /** origin "editor" gives only the test runs of the workflow editor, "!editor" leaves them out. */
+  runs: (q: { agentId?: string; kind?: string; limit?: number; parent?: string; origin?: "editor" | "!editor" } = {}) => {
     const p = new URLSearchParams(
       Object.entries(q)
         .filter(([, v]) => v !== undefined)

@@ -49,6 +49,14 @@ export interface StartOptions {
   builderModel?: string;
   /** The top run of the run tree (docs/EFFECTS.md). Default: this run. */
   rootRunId?: string;
+  /** Actions with a side effect give a preview and do not go out (docs/WORKFLOW_EDITOR.md). Nested runs get it. */
+  dryRun?: boolean;
+  /** A run that a person started from the workflow editor. */
+  origin?: RunRecord["origin"];
+  /** Pinned outputs of the editor: these steps do not run. */
+  pinned?: Record<string, { output: unknown; ports?: string[] }>;
+  /** A partial run of the editor: the run stops after this step. */
+  targetNodeId?: string;
 }
 
 interface LaunchOptions extends StartOptions {
@@ -149,6 +157,9 @@ export class RunManager {
       kind: opts.kind ?? "run",
       parentRunId: opts.parentRunId,
       trigger: opts.trigger,
+      ...(opts.origin ? { origin: opts.origin } : {}),
+      ...(opts.dryRun ? { dryRun: true } : {}),
+      ...(opts.targetNodeId ? { targetNodeId: opts.targetNodeId } : {}),
       status: "running",
       input,
       startedAt: Date.now(),
@@ -171,6 +182,8 @@ export class RunManager {
       const record = await this.deps.store.getRun(sum.id);
       if (!record || record.status !== "waiting" || ownedByLiveProcess(record.pid)) continue;
       try {
+        // A test run of the editor ran a draft that is not saved: it cannot start again from the saved agent.
+        if (record.origin === "editor") throw new Error("a test run of the workflow editor uses an unsaved draft. Start the test again in the editor");
         const spec = this.resolveSpec({ agentId: record.agentId }, record.version);
         const replay = record.checkpoint?.nodes ?? {};
         record.pid = process.pid;
@@ -181,7 +194,7 @@ export class RunManager {
           level: "warn",
           message: `recovered after a restart: ${Object.keys(replay).length} finished step(s) replay, and the waiting step asks again`,
         } as RunEvent);
-        this.launch(record, spec, { kind: record.kind, trigger: record.trigger, replay, baseUsage: record.usage, humanMode: "interactive" });
+        this.launch(record, spec, { kind: record.kind, trigger: record.trigger, replay, baseUsage: record.usage, humanMode: "interactive", dryRun: record.dryRun });
         out.push(record.id);
       } catch (e) {
         record.status = "failed";
@@ -214,7 +227,7 @@ export class RunManager {
             registry: this.deps.registry,
             // A best-of-N candidate builds with its own model. Its nested runs (the tests) use the shared brain.
             brain: opts.builderModel ? this.brain.with({ model: opts.builderModel }) : this.brain,
-            services: this.servicesFor(record.id, humanMode, record.kind, opts.freshData, rootRunId),
+            services: this.servicesFor(record.id, humanMode, record.kind, opts.freshData, rootRunId, opts.dryRun),
             maxParallel: this.deps.config.maxParallel,
             nodeTimeoutMs: this.deps.config.nodeTimeoutMs,
             maxPaidSearches: this.deps.config.maxPaidSearchesPerRun,
@@ -225,6 +238,8 @@ export class RunManager {
             depth: opts.depth ?? 0,
             emit: (e) => this.onEvent(run, e),
             replay: opts.replay,
+            pinned: opts.pinned,
+            targetNodeId: opts.targetNodeId,
             onNodeDone: (nodeId, output, ports) => {
               run.checkpoint.nodes[nodeId] = { output: redactSecrets(output), ports };
             },
@@ -273,6 +288,8 @@ export class RunManager {
       record.error = redactSecrets(result.error);
       record.usage = opts.baseUsage ? addUsage(structuredClone(opts.baseUsage), result.usage) : result.usage;
       delete record.checkpoint;
+      // A run of the editor keeps the full data of its steps (docs/WORKFLOW_EDITOR.md).
+      if (record.origin === "editor") record.stepData = run.checkpoint.nodes;
       if (result.harness && result.harness.status !== "off") record.harness = result.harness;
       if (run.persistTimer) clearTimeout(run.persistTimer);
       await this.deps.store.saveRun(record);
@@ -299,12 +316,13 @@ export class RunManager {
     return this.active.get(r.id)!.done;
   }
 
-  private servicesFor(runId: string, humanMode: "interactive" | "auto", runKind?: RunRecord["kind"], freshData?: boolean, rootRunId = runId): Services {
+  private servicesFor(runId: string, humanMode: "interactive" | "auto", runKind?: RunRecord["kind"], freshData?: boolean, rootRunId = runId, dryRun?: boolean): Services {
     return {
       ...this.services,
       runKind,
       rootRunId,
       ...(freshData ? { freshData } : {}),
+      ...(dryRun ? { dryRun } : {}),
       // A nested run reads fresh data when its parent does, and keeps the root of the run tree (docs/EFFECTS.md).
       runAgent: (ref, input, opts = {}) =>
         this.runNested(ref, input, {
@@ -313,6 +331,8 @@ export class RunManager {
           humanMode: opts.humanMode ?? humanMode,
           freshData: opts.freshData ?? freshData,
           rootRunId: opts.rootRunId ?? rootRunId,
+          // A nested run of a dry run is a dry run too: no action of a sub-agent goes out.
+          dryRun: opts.dryRun || dryRun,
         }),
     };
   }
@@ -330,6 +350,7 @@ export class RunManager {
         freshData: opts.freshData,
         builderModel: opts.builderModel,
         rootRunId: opts.rootRunId,
+        dryRun: opts.dryRun,
       });
       const nodeOutputs: Record<string, unknown> = {};
       const nodeConfigs: Record<string, unknown> = {};
@@ -357,7 +378,14 @@ export class RunManager {
       {
         registry: this.deps.registry,
         brain: this.brain,
-        services: this.servicesFor(runId, opts.humanMode ?? (this.deps.config.unattended ? "auto" : "interactive"), undefined, opts.freshData, opts.rootRunId ?? runId),
+        services: this.servicesFor(
+          runId,
+          opts.humanMode ?? (this.deps.config.unattended ? "auto" : "interactive"),
+          undefined,
+          opts.freshData,
+          opts.rootRunId ?? runId,
+          opts.dryRun,
+        ),
         maxParallel: this.deps.config.maxParallel,
         nodeTimeoutMs: this.deps.config.nodeTimeoutMs,
         maxPaidSearches: this.deps.config.maxPaidSearchesPerRun,
@@ -530,6 +558,13 @@ export class RunManager {
     if (!run) return false;
     run.ctrl.abort();
     return true;
+  }
+
+  /** The active runs that change the agent: a refine or an evolve run (the workflow editor waits for them). */
+  activeFor(agentId: string): RunRecord[] {
+    return [...this.active.values()]
+      .map((r) => r.record)
+      .filter((r) => r.kind === "refine" && r.agentId !== "anvil-assistant" && (r.input as { agentId?: string } | undefined)?.agentId === agentId);
   }
 
   isActive(runId: string) {

@@ -25,15 +25,15 @@ describe("egress policy", () => {
   it("asks a person for a request that sends data, and blocks it in evaluation runs", () => {
     expect(checkEgress({ tool: "http_request", url: "https://api.example.com/items", method: "POST", body: { a: 1 } }, policy())).toMatchObject({ allowed: true, needsApproval: true });
     const e = checkEgress({ tool: "http_request", url: "https://api.example.com/items", method: "POST", body: { a: 1 } }, policy({ evaluation: true }));
-    expect((e as { reason: string }).reason).toMatch(/Evaluation runs never send data out/);
+    expect((e as { reason: string }).reason).toMatch(/Evaluation runs and dry runs never send data out/);
   });
 
   it("blocks a request with a secret of the host or a credential pattern", () => {
     const host = checkEgress({ tool: "fetch_url", url: "https://api.example.com/?k=s3cr3t-value-of-the-host", method: "GET" }, policy());
     expect((host as { reason: string }).reason).toBe("the request contains a secret of the Anvil host");
     expect(findSecret("Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345", [])).toBe("a bearer token");
-    expect(findSecret("key=sk-or-v1-0123456789abcdef0123", [])).toBe("an API key (sk-...)"); // gitleaks:allow (a fake value for the test)
-    expect(findSecret("AKIAABCDEFGHIJKLMNOP", [])).toBe("an AWS access key"); // gitleaks:allow (a fake value for the test)
+    expect(findSecret("key=sk-or-v1-0123456789abcdef0123", [])).toBe("an API key (sk-...)");
+    expect(findSecret("AKIAABCDEFGHIJKLMNOP", [])).toBe("an AWS access key");
     expect(findSecret("a normal sentence", [])).toBeNull();
   });
 

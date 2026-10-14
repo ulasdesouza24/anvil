@@ -15,8 +15,8 @@
 export const TEMPLATE_ROOTS = ["input", "nodes", "item", "index", "vars", "run"] as const;
 export type TemplateRoot = (typeof TEMPLATE_ROOTS)[number];
 
-const FILTERS = ["json", "length", "join", "upper", "lower", "first", "last", "trim", "keys", "string", "number"] as const;
-type FilterName = (typeof FILTERS)[number];
+export const TEMPLATE_FILTERS = ["json", "length", "join", "upper", "lower", "first", "last", "trim", "keys", "string", "number"] as const;
+type FilterName = (typeof TEMPLATE_FILTERS)[number];
 
 type Segment = string | number;
 
@@ -135,8 +135,8 @@ export function parseExpr(source: string): ParsedExpr {
   const filters = filterParts.map((raw) => {
     const [name, ...rest] = raw.trim().split(":");
     const fname = name.trim() as FilterName;
-    if (!FILTERS.includes(fname)) {
-      throw new TemplateError(`Unknown filter "${name.trim()}". Available: ${FILTERS.join(", ")}`);
+    if (!TEMPLATE_FILTERS.includes(fname)) {
+      throw new TemplateError(`Unknown filter "${name.trim()}". Available: ${TEMPLATE_FILTERS.join(", ")}`);
     }
     const argRaw = rest.join(":").trim();
     const argLit = argRaw ? parseLiteral(argRaw) : null;

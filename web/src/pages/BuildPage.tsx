@@ -1375,6 +1375,9 @@ export function BuildPage() {
                 <Link to={`/agents/${published.agentId}?tab=run`} className="btn">
                   <Play size={13} /> Run it
                 </Link>
+                <Link to={`/agents/${published.agentId}/workflow`} className="btn" title="Open the agent in the workflow editor">
+                  Open in editor
+                </Link>
                 <Link to={`/agents/${published.agentId}`} className="btn btn-primary">
                   Open {published.name} <ArrowRight size={14} />
                 </Link>

@@ -9,3 +9,8 @@ data/kv
 data/files
 data/bench
 *.log
+# Local data and secrets never go into an image: the data of a container is in its volume.
+data
+**/.env
+.claude
+dist

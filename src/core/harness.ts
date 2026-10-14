@@ -254,7 +254,8 @@ export type HarnessResult = ExecuteResult & { harness: HarnessSummary };
 
 /** Runs the agent with the harness loop. Without the harness, it is one plain attempt. */
 export async function executeWithHarness(spec: AgentSpec, input: unknown, deps: EngineDeps, opts: ExecuteOptions & { maxAttempts?: number }): Promise<HarnessResult> {
-  if (!harnessEnabled(spec)) {
+  // A partial run of the editor checks no acceptance rule: its output is the output of one step.
+  if (!harnessEnabled(spec) || opts.targetNodeId) {
     const r = await executeAgent(spec, input, deps, opts);
     return { ...r, harness: { status: "off", attempts: 1, strategies: [], gaps: [] } };
   }

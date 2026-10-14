@@ -1,5 +1,7 @@
 import { loadConfig, type AnvilConfig } from "../core/config.js";
 import { createCoreRegistry } from "../core/nodes/index.js";
+import { sandboxReady } from "../core/tools/text.js";
+import type { WorkspaceScope } from "../core/scope.js";
 import type { Registry } from "../core/registry.js";
 import { validateSpec } from "../core/validator.js";
 import { EXAMPLE_SPEC } from "../builder/guide.js";
@@ -42,12 +44,23 @@ export function createRegistry(): Registry {
   return createCoreRegistry().register(...ANVIL_NODE_CLASSES, AnvilSourcesNode, AnvilLibraryNode, AnvilToolsNode, AnvilBestOfNode);
 }
 
-export async function createAnvil(opts: { config?: Partial<AnvilConfig>; client?: ModelClient; mcpTransport?: McpHubOptions["createTransport"] } = {}): Promise<Anvil> {
+export interface CreateAnvilOptions {
+  config?: Partial<AnvilConfig>;
+  client?: ModelClient;
+  mcpTransport?: McpHubOptions["createTransport"];
+  /** The workspace scope of a hosted user (docs/HOSTING.md): its env gets the secrets of the user. */
+  scope?: WorkspaceScope;
+  /** The key of the secret store. Default: ANVIL_SECRETS_KEY. */
+  secretsKey?: string;
+}
+
+export async function createAnvil(opts: CreateAnvilOptions = {}): Promise<Anvil> {
+  await sandboxReady;
   const config = { ...loadConfig(), ...(opts.config ?? {}) };
   const registry = createRegistry();
   const store = new FileStore(config.dataDir).init();
   // Secrets from the UI go into the environment before anything reads it (docs/SECRETS.md).
-  const secrets = new SecretService(config.dataDir, process.env.ANVIL_SECRETS_KEY).load();
+  const secrets = new SecretService(config.dataDir, opts.secretsKey ?? process.env.ANVIL_SECRETS_KEY, opts.scope?.env ?? process.env, opts.scope).load();
   const client = opts.client ?? new OpenRouterClient(config);
 
   // System agents are code-defined; refresh them on every boot. They must compile.
@@ -67,7 +80,13 @@ export async function createAnvil(opts: { config?: Partial<AnvilConfig>; client?
   const classes = new ClassManager(store, registry);
   classes.loadAll();
   const costModel = new CostModel(store);
-  const mcp = new McpHub({ store, classes, ...(opts.mcpTransport ? { createTransport: opts.mcpTransport } : {}) });
+  const mcp = new McpHub({
+    store,
+    classes,
+    ...(opts.mcpTransport ? { createTransport: opts.mcpTransport } : {}),
+    ...(opts.scope ? { env: opts.scope.env } : {}),
+    allowStdio: !config.hosted,
+  });
   // The browser starts only when a node uses it for the first time.
   const browser = new BrowserService({
     executablePath: config.browserPath,
@@ -77,11 +96,12 @@ export async function createAnvil(opts: { config?: Partial<AnvilConfig>; client?
     domainIntervalMs: config.browserDomainIntervalMs,
     respectRobots: config.browserRespectRobots,
   });
-  classes.attach({ browser, mcp: mcp.call });
+  // A hosted Anvil has no browser for its users (docs/HOSTING.md): a page can reach the network of the server.
+  classes.attach({ browser: config.hosted ? undefined : browser, mcp: mcp.call });
   // The sandbox starts its containers only when a program runs for the first time.
   const sandbox = new SandboxManager(config.sandbox);
   const files = new FileService(config.dataDir, config.files);
-  const runs = new RunManager({ registry, client, store, config, classes, mcp, costModel, browser, sandbox, files });
+  const runs = new RunManager({ registry, client, store, config, classes, mcp, costModel, browser: config.hosted ? undefined : browser, sandbox, files });
   // Each finished build is one more sample for the cost estimate.
   runs.onFinished((r) => {
     if (r.agentId !== "anvil-builder" || r.status === "cancelled") return;

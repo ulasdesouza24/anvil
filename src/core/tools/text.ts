@@ -1,4 +1,11 @@
-import vm from "node:vm";
+import { getQuickJS, shouldInterruptAfterDeadline, type QuickJSWASMModule } from "quickjs-emscripten";
+
+/** The QuickJS engine (WebAssembly). It loads one time, and each code run gets a new runtime. */
+let quickjs: QuickJSWASMModule | undefined;
+/** Resolves when the code sandbox is ready. createAnvil waits for it, so each run can use runSandboxed at once. */
+export const sandboxReady: Promise<void> = getQuickJS().then((q) => {
+  quickjs = q;
+});
 
 /* ------------------------------ BM25 search ------------------------------ */
 
@@ -231,43 +238,51 @@ export function asyncCodeProblem(code: string): string | null {
     : null;
 }
 
+/** The most memory that one code run can use. */
+const CODE_MEMORY_BYTES = 64 * 1024 * 1024;
+const PROMISE_MARK = "__anvil_promise__";
+
 /**
- * Runs user/agent-authored JS in a fresh V8 context with a timeout. Note that
- * node:vm isolates globals but is not a hard security boundary; Anvil is a
- * local-first tool and treats code nodes as trusted-by-the-operator.
+ * Runs user or agent JS in QuickJS (WebAssembly): a separate engine with no access to Node, the file system,
+ * the network, or the process. This is a real security boundary, so a hosted Anvil can run code of its users.
+ * The bindings and the result cross the boundary as JSON. The run stops at the time limit and the memory limit.
  */
 export function runSandboxed(code: string, bindings: Record<string, unknown>, timeoutMs = 2000): unknown {
-  const context = vm.createContext(
-    {
-      ...structuredClone(bindings),
-      JSON,
-      Math,
-      Date,
-      Number,
-      String,
-      Boolean,
-      Array,
-      Object,
-      RegExp,
-      Map,
-      Set,
-      parseInt,
-      parseFloat,
-      isNaN,
-      isFinite,
-      encodeURIComponent,
-      decodeURIComponent,
-      console: { log: () => undefined },
-    },
-    { codeGeneration: { strings: false, wasm: false } },
-  );
-  const wrapped = `(function(){ "use strict"; ${code}\n})()`;
-  const result = vm.runInContext(wrapped, context, { timeout: timeoutMs });
-  // A promise from the code: its error has no handler and can stop the whole process. Catch it, and fail this step only.
-  if (result && typeof (result as { then?: unknown }).then === "function") {
-    (result as Promise<unknown>).then(undefined, () => undefined);
-    throw new Error(asyncCodeProblem(code) ?? "The code returned a promise. Code runs synchronously: do not use async, await, promises, or fetch.");
+  if (!quickjs) throw new Error("The code sandbox is not ready yet: wait for sandboxReady");
+  const runtime = quickjs.newRuntime();
+  runtime.setMemoryLimit(CODE_MEMORY_BYTES);
+  runtime.setMaxStackSize(1024 * 1024);
+  runtime.setInterruptHandler(shouldInterruptAfterDeadline(Date.now() + timeoutMs));
+  const vm = runtime.newContext();
+  try {
+    const data = vm.newString(JSON.stringify(bindings ?? {}));
+    vm.setProp(vm.global, "__anvil_bindings", data);
+    data.dispose();
+    const program = `(() => {
+      const __b = JSON.parse(globalThis.__anvil_bindings);
+      delete globalThis.__anvil_bindings;
+      for (const __k of Object.keys(__b)) globalThis[__k] = __b[__k];
+      globalThis.console = { log() {}, warn() {}, error() {} };
+      const __r = (function(){ "use strict"; ${code}\n})();
+      if (__r && typeof __r.then === "function") return ${JSON.stringify(PROMISE_MARK)};
+      return JSON.stringify(__r === undefined ? null : __r);
+    })()`;
+    const result = vm.evalCode(program, "code.js");
+    if (result.error) {
+      const err = vm.dump(result.error) as { message?: string; name?: string } | string;
+      result.error.dispose();
+      const message = typeof err === "string" ? err : `${err?.name && err.name !== "Error" ? `${err.name}: ` : ""}${err?.message ?? "the code failed"}`;
+      if (/interrupted/i.test(message)) throw new Error(`Script execution timed out after ${timeoutMs}ms`);
+      if (/out of memory/i.test(message)) throw new Error("The code used more than 64 MB of memory");
+      throw new Error(message);
+    }
+    const text = vm.getString(result.value);
+    result.value.dispose();
+    if (text === PROMISE_MARK)
+      throw new Error(asyncCodeProblem(code) ?? "The code returned a promise. Code runs synchronously: do not use async, await, promises, or fetch.");
+    return text === undefined ? null : JSON.parse(text);
+  } finally {
+    vm.dispose();
+    runtime.dispose();
   }
-  // Round-trip through JSON to strip cross-realm prototypes and functions.
-  return result === undefined ? null : JSON.parse(JSON.stringify(result));
 }

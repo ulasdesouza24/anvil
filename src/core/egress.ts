@@ -1,3 +1,4 @@
+import { currentScope } from "./scope.js";
 /**
  * The egress policy for programs in the sandbox (docs/SANDBOX.md, section 2.7).
  *
@@ -14,7 +15,7 @@ export interface EgressPolicy {
   allowDomains: Set<string>;
   /** The most bytes that one request can send (URL query and body). */
   maxBody: number;
-  /** Evaluation runs never send data out. */
+  /** Evaluation runs and dry runs never send data out. */
   evaluation: boolean;
   /** Secret values of the host that must never leave (from the environment). */
   secretValues: string[];
@@ -46,9 +47,14 @@ const SECRET_PATTERNS: [string, RegExp][] = [
 /** The name of a secret variable: KEY, TOKEN, SECRET, PASSWORD, or WEBHOOK in the name. */
 export const SECRET_ENV_NAME = /KEY|TOKEN|SECRET|PASSWORD|WEBHOOK/i;
 
-/** The secret values of the host environment: variables with KEY, TOKEN, SECRET, PASSWORD, or WEBHOOK in the name. */
-export function hostSecretValues(env: Record<string, string | undefined> = process.env): string[] {
-  return Object.entries(env)
+/**
+ * The secret values of the host environment: variables with KEY, TOKEN, SECRET, PASSWORD, or WEBHOOK in the name.
+ * In a workspace scope (docs/HOSTING.md), each value of the workspace is a secret of its user.
+ */
+export function hostSecretValues(env?: Record<string, string | undefined>): string[] {
+  const scope = env ? undefined : currentScope();
+  if (scope) return Object.values(scope.env).filter((v): v is string => typeof v === "string" && v.length >= 8);
+  return Object.entries(env ?? process.env)
     .filter(([k, v]) => SECRET_ENV_NAME.test(k) && typeof v === "string" && v.length >= 12)
     .map(([, v]) => v as string);
 }
@@ -93,6 +99,6 @@ export function checkEgress(req: EgressRequest, policy: EgressPolicy): EgressDec
   if (secret) return { allowed: false, reason: `the request contains ${secret}`, host, bytes };
   if (bytes > policy.maxBody) return { allowed: false, reason: `the request sends ${bytes} bytes. The limit is ${policy.maxBody} bytes.`, host, bytes };
   const write = WRITE_METHODS.has(method);
-  if (write && policy.evaluation) return { allowed: false, reason: `${method} requests send data. Evaluation runs never send data out.`, host, bytes };
+  if (write && policy.evaluation) return { allowed: false, reason: `${method} requests send data. Evaluation runs and dry runs never send data out.`, host, bytes };
   return { allowed: true, needsApproval: write, host, bytes };
 }

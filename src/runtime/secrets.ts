@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { hostSecretValues, SECRET_ENV_NAME } from "../core/egress.js";
 import { setExtraHostHeaders } from "../core/liveFetch.js";
+import type { WorkspaceScope } from "../core/scope.js";
 
 /**
  * Secrets from the UI (docs/SECRETS.md). A person enters API keys and host
@@ -77,7 +78,16 @@ export class SecretService {
   /** The names that this service put into the environment: only these are removed again. */
   private applied = new Set<string>();
 
-  constructor(dataDir: string, rawKey: string | undefined, private env: NodeJS.ProcessEnv = process.env) {
+  /**
+   * env: where the values go (the process environment, or the env of a workspace scope).
+   * scope: the workspace scope that gets the host headers (docs/HOSTING.md). Without it, they are global.
+   */
+  constructor(
+    dataDir: string,
+    rawKey: string | undefined,
+    private env: Record<string, string | undefined> = process.env,
+    private scope?: WorkspaceScope,
+  ) {
     this.file = path.join(dataDir, "secrets.enc.json");
     this.key = rawKey ? keyOf(rawKey) : null;
   }
@@ -102,7 +112,7 @@ export class SecretService {
       this.env[name] = s.value;
       this.applied.add(name);
     }
-    setExtraHostHeaders(this.data.hostHeaders);
+    setExtraHostHeaders(this.data.hostHeaders, this.scope);
     return this;
   }
 
@@ -155,7 +165,10 @@ export class SecretService {
     for (const [label, names] of Object.entries(uses)) for (const n of names) add(n, label);
     for (const [host, headers] of Object.entries({ ...envHostHeaders, ...this.data.hostHeaders }))
       for (const v of Object.values(headers)) for (const m of v.matchAll(/\$\{([A-Z0-9_]+)\}/g)) add(m[1], `host ${host}`);
-    return [...use.entries()].filter(([n]) => !this.env[n]).map(([name, by]) => ({ name, usedBy: [...by].sort() })).sort((a, b) => a.name.localeCompare(b.name));
+    return [...use.entries()]
+      .filter(([n]) => !this.env[n])
+      .map(([name, by]) => ({ name, usedBy: [...by].sort() }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   hostHeaders(): Record<string, Record<string, string>> {
@@ -170,11 +183,12 @@ export class SecretService {
       if (!/^[A-Za-z0-9-]+$/.test(k)) throw new Error(`"${k}" is not a header name`);
       if (typeof v !== "string") throw new Error(`The value of "${k}" must be text`);
       // A literal credential belongs in a secret. The header names it: ${NAME}.
-      if (/authorization|api[-_]?key|token/i.test(k) && !/\$\{[A-Z0-9_]+\}/.test(v)) throw new Error(`The header "${k}" looks like a credential. Save the value as a secret and use \${NAME} here.`);
+      if (/authorization|api[-_]?key|token/i.test(k) && !/\$\{[A-Z0-9_]+\}/.test(v))
+        throw new Error(`The header "${k}" looks like a credential. Save the value as a secret and use \${NAME} here.`);
     }
     if (Object.keys(headers).length) this.data.hostHeaders[h] = headers;
     else delete this.data.hostHeaders[h];
     this.save();
-    setExtraHostHeaders(this.data.hostHeaders);
+    setExtraHostHeaders(this.data.hostHeaders, this.scope);
   }
 }

@@ -109,7 +109,7 @@ describe("send steps", () => {
 
   it("send_webhook uses a secret URL and secret headers, and fails on an HTTP error", async () => {
     const anvil = await anvilWith(new FakeClient());
-    await withEnv({ REPORT_WEBHOOK_URL: `${base}/hook`, REPORT_TOKEN: "tok-1234567890abcd" }, async () => { // gitleaks:allow (a fake value for the test)
+    await withEnv({ REPORT_WEBHOOK_URL: `${base}/hook`, REPORT_TOKEN: "tok-1234567890abcd" }, async () => {
       const r = await anvil.runs.run({ spec: one({ id: "hook", type: "send_webhook", config: { urlSecret: "REPORT_WEBHOOK_URL", body: { a: 1 }, headers: { Authorization: "Bearer ${REPORT_TOKEN}" } } }) }, {});
       expect(r.output).toMatchObject({ sent: true, channel: "webhook", status: 200 });
       expect(posts.at(-1)).toMatchObject({ url: "/hook", body: '{"a":1}' });

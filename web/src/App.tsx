@@ -1,8 +1,11 @@
-import { Activity, Boxes, Cable, Gauge, Hammer, History, Library, Shapes, Zap } from "lucide-react";
-import { useEffect, useState } from "react";
-import { NavLink, Route, Routes } from "react-router-dom";
+import { Activity, Boxes, Cable, Gauge, Hammer, History, Library, LogOut, Settings, Shapes, Store, Zap } from "lucide-react";
+import { Link, NavLink, Route, Routes } from "react-router-dom";
 import { TokenDialog } from "./components/TokenDialog";
-import { api, type Health } from "./lib/api";
+import { SessionProvider, useSession } from "./lib/session";
+import { AuthPage } from "./pages/AuthPage";
+import { BazaarListingPage, BazaarPage } from "./pages/BazaarPage";
+import { SettingsPage } from "./pages/SettingsPage";
+import { WorkflowEditorPage } from "./pages/WorkflowEditorPage";
 import { AgentPage } from "./pages/AgentPage";
 import { AgentsPage } from "./pages/AgentsPage";
 import { AutomationsPage } from "./pages/AutomationsPage";
@@ -33,6 +36,7 @@ function Logo() {
 const NAV = [
   { to: "/", label: "Build", icon: Hammer, end: true },
   { to: "/agents", label: "Agents", icon: Boxes },
+  { to: "/bazaar", label: "Agent Bazaar", icon: Store },
   { to: "/classes", label: "Classes", icon: Shapes },
   { to: "/automations", label: "Automations", icon: Zap },
   { to: "/runs", label: "Runs", icon: History },
@@ -40,24 +44,26 @@ const NAV = [
   { to: "/connections", label: "Connections", icon: Cable },
   { to: "/benchmark", label: "Benchmark", icon: Gauge },
   { to: "/usage", label: "Usage", icon: Activity },
+  { to: "/settings", label: "Settings", icon: Settings },
 ];
 
 export function App() {
-  const [health, setHealth] = useState<Health | null>(null);
-  const [down, setDown] = useState(false);
-  useEffect(() => {
-    api
-      .health()
-      .then((h) => {
-        setHealth(h);
-        setDown(false);
-      })
-      .catch(() => setDown(true));
-  }, []);
+  return (
+    <SessionProvider>
+      <Shell />
+    </SessionProvider>
+  );
+}
+
+function Shell() {
+  const { hosted, me, signedOut, down, signOut } = useSession();
+  if (hosted === null) return <div className="grid h-full place-items-center text-[13px] text-[var(--color-muted)]">Loading…</div>;
+  // A hosted Anvil shows the sign-in page until the user signs in (docs/HOSTING.md).
+  if (hosted && signedOut) return <AuthPage />;
 
   return (
     <div className="flex h-full">
-      <TokenDialog />
+      {!hosted && <TokenDialog />}
       <aside className="flex w-[216px] shrink-0 flex-col border-r border-[var(--color-line)] bg-[var(--color-panel)] px-3 py-4">
         <Logo />
         <nav className="mt-7 space-y-0.5">
@@ -76,21 +82,40 @@ export function App() {
         </nav>
         <div className="mt-auto space-y-2 px-1 text-[11px]">
           {down && <div className="rounded-md border border-[rgba(248,113,113,0.4)] p-2 text-[var(--color-bad)]">API unreachable — is the server running?</div>}
-          {health && !health.keyConfigured && (
-            <div className="rounded-md border border-[rgba(248,113,113,0.4)] p-2 text-[var(--color-bad)]">OPENROUTER_API_KEY missing in .env</div>
+          {me && !me.key.configured && (
+            <Link to="/settings" className="block rounded-md border border-[rgba(248,113,113,0.4)] p-2 text-[var(--color-bad)] hover:bg-[rgba(248,113,113,0.06)]">
+              Add your OpenRouter key in Settings
+            </Link>
           )}
-          {health && (
-            <div className="space-y-1.5 rounded-lg border border-[var(--color-line)] p-2.5">
+          {me && (
+            <Link
+              to="/settings"
+              className="block space-y-1.5 rounded-lg border border-[var(--color-line)] p-2.5 hover:border-[var(--color-line-2)]"
+              title="Change the models in Settings"
+            >
               <div className="flex items-center gap-1.5">
                 <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-s1)]" />
                 <span className="text-[var(--color-faint)]">System 1</span>
-                <span className="mono ml-auto truncate text-[var(--color-muted)]">{health.models.decision.split("/").pop()}</span>
+                <span className="mono ml-auto truncate text-[var(--color-muted)]">{me.models.decision.split("/").pop()}</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-s2)]" />
                 <span className="text-[var(--color-faint)]">System 2</span>
-                <span className="mono ml-auto truncate text-[var(--color-muted)]">{health.models.llm.split("/").pop()}</span>
+                <span className="mono ml-auto truncate text-[var(--color-muted)]" title={me.models.llm}>
+                  {me.models.llm.split("/").pop()}
+                </span>
               </div>
+            </Link>
+          )}
+          {me?.account && (
+            <div className="flex items-center gap-2 rounded-lg px-1 py-1">
+              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[var(--color-panel-2)] text-[11px] font-semibold uppercase text-[var(--color-ember)]">
+                {me.account.username[0]}
+              </span>
+              <span className="mono min-w-0 flex-1 truncate text-[12px] text-[var(--color-muted)]">@{me.account.username}</span>
+              <button className="text-[var(--color-faint)] hover:text-[var(--color-fg)]" title="Sign out" onClick={signOut}>
+                <LogOut size={13} />
+              </button>
             </div>
           )}
         </div>
@@ -101,6 +126,10 @@ export function App() {
           <Route path="/builds/:runId" element={<BuildPage />} />
           <Route path="/agents" element={<AgentsPage />} />
           <Route path="/agents/:id" element={<AgentPage />} />
+          <Route path="/agents/:id/workflow" element={<WorkflowEditorPage />} />
+          <Route path="/bazaar" element={<BazaarPage />} />
+          <Route path="/bazaar/:id" element={<BazaarListingPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
           <Route path="/automations" element={<AutomationsPage />} />
           <Route path="/runs" element={<RunsPage />} />
           <Route path="/runs/:id" element={<RunPage />} />

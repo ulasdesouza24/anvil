@@ -120,6 +120,21 @@ export function AgentsPage() {
             <button className="btn" onClick={() => file.current?.click()}>
               <Upload size={14} /> Import JSON
             </button>
+            <button
+              className="btn"
+              onClick={async () => {
+                const name = prompt("Workflow name", "New workflow");
+                if (!name?.trim()) return;
+                try {
+                  const a = await api.createBlank(name.trim());
+                  nav(`/agents/${a.id}/workflow`);
+                } catch (e) {
+                  setErr((e as Error).message);
+                }
+              }}
+            >
+              New workflow
+            </button>
             <Link to="/" className="btn btn-primary">
               <Hammer size={14} /> Anvil new
             </Link>

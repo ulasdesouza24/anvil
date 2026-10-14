@@ -12,17 +12,23 @@ import { validateSpec } from "../core/validator.js";
 import { OpenRouterClient } from "../llm/openrouter.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { compareReports, listReports } from "../bench/runner.js";
-import { createAnvil } from "../runtime/anvil.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { loadConfig } from "../core/config.js";
+import { SETTING_FIELDS, SETTING_GROUPS, settingValues } from "../core/userSettings.js";
+import { AccountService } from "../runtime/accounts.js";
+import { Bazaar } from "../runtime/bazaar.js";
+import { installNetGuard } from "../runtime/netGuard.js";
+import { localSettingsKey, SettingsStore } from "../runtime/settingsStore.js";
+import { inWorkspace, WorkspaceManager, type Workspace } from "../runtime/workspaces.js";
 import { allLessons, classifyLibrary, deleteLesson, exampleGate, knownDomains, taxonomyOf } from "../builder/library.js";
 import { qualityOf } from "../core/quality.js";
 import { createAnvilMcpServer, localBackend, toolNameFor } from "../runtime/mcpServer.js";
 import { guardProcess } from "../runtime/processGuard.js";
-import { apiTokenOk } from "./auth.js";
+import { apiTokenOk, OPEN, tokenOf } from "./auth.js";
 import { mountWebhooks } from "./webhooks.js";
+import { mountWorkflow } from "./workflow.js";
 import { SIGNATURE_HEADER, signWebhook, TIMESTAMP_HEADER } from "../runtime/triggers.js";
-import { converse, isConversational, SessionService } from "../runtime/sessions.js";
-import { HealthService } from "../runtime/health.js";
-import { FeedbackService } from "../runtime/feedback.js";
+import { converse, isConversational } from "../runtime/sessions.js";
 import { sendSecretsOf } from "../core/nodes/send.js";
 import { builderFor, checkModels } from "../builder/bestOf.js";
 import { parseToolDefinitions } from "../core/toolDefs.js";
@@ -30,35 +36,103 @@ import { parseExternalTests } from "../core/externalTests.js";
 
 guardProcess("server");
 
-const anvil = await createAnvil();
-const { store, runs, registry, config, classes, triggers, mcp, files, secrets } = anvil;
-// The runs that waited for a person start again before the triggers, so a trigger sees them as active (docs/RECOVERY.md).
-const recovered = await runs.recover();
-if (recovered.length) console.log(`[runs] recovered ${recovered.length} waiting run(s) after the restart`);
-await triggers.start();
-void mcp.connectAll();
-const sessions = new SessionService(store);
-// Health checks of live data agents (docs/HEALTH.md).
-const health = new HealthService({ store, kv: store, runs, config: config.health, log: (m) => console.log(m) });
-health.start();
-// Feedback becomes a test (docs/FEEDBACK.md).
-const feedback = new FeedbackService({ store, kv: store, brain: runs.brain, runs });
+// The server config. In the hosted mode, each user gets a workspace with the settings of that user on top of it.
+const baseConfig = loadConfig();
+const config0 = baseConfig;
+
+// Hosted mode (docs/HOSTING.md): accounts, one workspace for each user, and a network guard. The server keys
+// leave the environment at once, so no lookup of a user (a secret name in a class or a step) can read them.
+let accounts: AccountService | undefined;
+let settingsStore: SettingsStore;
+let hostedSecretsKey: string | undefined;
+if (baseConfig.hosted) {
+  const sessionSecret = process.env.ANVIL_SESSION_SECRET ?? "";
+  hostedSecretsKey = process.env.ANVIL_SECRETS_KEY ?? "";
+  for (const k of Object.keys(process.env)) if (/KEY|TOKEN|SECRET|PASSWORD|WEBHOOK/i.test(k)) delete process.env[k];
+  baseConfig.apiKey = "";
+  accounts = new AccountService(baseConfig.dataDir, sessionSecret, hostedSecretsKey).load();
+  settingsStore = accounts.settingsStore();
+  installNetGuard();
+  console.log(`[hosted] ${accounts.list().length} account(s). Each user runs with an own OpenRouter key.`);
+} else {
+  settingsStore = new SettingsStore((id) => path.join(baseConfig.dataDir, `${id}-settings.json`), localSettingsKey(baseConfig.dataDir));
+}
+const workspaces = new WorkspaceManager(baseConfig, { settings: settingsStore, accounts, secretsKey: hostedSecretsKey });
+const bazaar = new Bazaar(baseConfig.dataDir, (id) => (id === "local" ? "local" : (accounts?.get(id)?.username ?? "a deleted user"))).load();
+const localWs = baseConfig.hosted ? undefined : await workspaces.local();
+if (baseConfig.hosted) console.log(`[hosted] opened ${await workspaces.openAll()} workspace(s)`);
+
+/**
+ * The workspace of the current request. Each route below uses store, runs, config, … as before: these names
+ * point to the workspace of the request (its user), so one user never reads the data of another user.
+ */
+const currentWs = new AsyncLocalStorage<Workspace>();
+function ws(): Workspace {
+  const w = currentWs.getStore() ?? localWs;
+  if (!w) throw new Error("This route needs a signed-in user");
+  return w;
+}
+/** A name that points to a part of the current workspace (see ws). */
+function scoped<T extends object>(pick: (w: Workspace) => T): T {
+  return new Proxy({} as T, {
+    get(_t, key) {
+      const target = pick(ws()) as Record<string | symbol, unknown>;
+      const v = Reflect.get(target, key, target);
+      return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+    },
+    set(_t, key, value) {
+      return Reflect.set(pick(ws()) as object, key, value);
+    },
+    has(_t, key) {
+      return key in (pick(ws()) as object);
+    },
+    ownKeys() {
+      return Reflect.ownKeys(pick(ws()) as object);
+    },
+    getOwnPropertyDescriptor(_t, key) {
+      const d = Reflect.getOwnPropertyDescriptor(pick(ws()) as object, key);
+      return d ? { ...d, configurable: true } : undefined;
+    },
+  });
+}
+const anvil = scoped((w) => w.anvil);
+const store = scoped((w) => w.anvil.store);
+const runs = scoped((w) => w.anvil.runs);
+const registry = scoped((w) => w.anvil.registry);
+const config = scoped((w) => w.anvil.config);
+const classes = scoped((w) => w.anvil.classes);
+const triggers = scoped((w) => w.anvil.triggers);
+const mcp = scoped((w) => w.anvil.mcp);
+const files = scoped((w) => w.anvil.files);
+const secrets = scoped((w) => w.anvil.secrets);
+const sessions = scoped((w) => w.sessions);
+const health = scoped((w) => w.health);
+const feedback = scoped((w) => w.feedback);
+
 const app = new Hono();
 
-app.use("/api/*", cors({ origin: (o) => (o && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(o) ? o : null) }));
+const localOrigin = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+// ANVIL_CORS_ORIGINS: exact origins, or a pattern with * for one name part (https://*.vercel.app for preview deployments).
+const corsPatterns = config0.corsOrigins.map((o) => new RegExp(`^${o.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[a-z0-9-]+")}$`, "i"));
+const allowedOrigin = (o: string) => localOrigin.test(o) || corsPatterns.some((re) => re.test(o));
+app.use("/api/*", cors({ origin: (o) => (o && allowedOrigin(o) ? o : null), allowHeaders: ["Authorization", "Content-Type", "X-Anvil-Token"], maxAge: 600 }));
 
-// The API token. Webhooks have their own token, and the health check is open.
+/**
+ * Access (docs/HOSTING.md). The local Anvil: the API token, and the one workspace.
+ * The hosted Anvil: a session token of an account, and the workspace of that account.
+ */
 app.use("/api/*", async (c, next) => {
-  if (
-    !apiTokenOk(
-      config.apiToken,
-      c.req.path,
-      (h) => c.req.header(h),
-      (q) => c.req.query(q),
-    )
-  )
-    return c.json({ error: "unauthorized: give the API token (ANVIL_API_TOKEN)" }, 401);
-  return next();
+  const header = (h: string) => c.req.header(h);
+  const query = (q: string) => c.req.query(q);
+  if (!accounts) {
+    if (!apiTokenOk(config0.apiToken, c.req.path, header, query)) return c.json({ error: "unauthorized: give the API token (ANVIL_API_TOKEN)" }, 401);
+    return currentWs.run(localWs!, () => inWorkspace(localWs!, next));
+  }
+  if (OPEN.some((re) => re.test(c.req.path))) return next();
+  const account = accounts.verify(tokenOf(c.req.path, header, query));
+  if (!account) return c.json({ error: "Sign in to use Anvil", signIn: true }, 401);
+  const w = await workspaces.user(account.id);
+  return currentWs.run(w, () => inWorkspace(w, next));
 });
 
 app.onError((err, c) => {
@@ -92,17 +166,29 @@ const getAgent = (id: string) => store.getAgent(id);
 
 /* --------------------------------- meta --------------------------------- */
 
-app.get("/api/health", (c) =>
-  c.json({
+app.get("/api/health", (c) => {
+  // The hosted health check is public: it gives no data of a workspace. The sidebar reads the models of a user from /api/me.
+  const w = currentWs.getStore() ?? localWs;
+  if (!w)
+    return c.json({
+      ok: true,
+      hosted: true,
+      keyConfigured: false,
+      models: { llm: config0.llmModel, decision: config0.decisionModel },
+      tiers: config0.tiers,
+      providerSort: config0.providerSort,
+    });
+  return c.json({
     ok: true,
+    hosted: !!accounts,
     keyConfigured: !!config.apiKey,
     models: { llm: config.llmModel, decision: config.decisionModel },
     tiers: config.tiers,
     providerSort: config.providerSort,
     providers: anvil.client instanceof OpenRouterClient ? anvil.client.health.snapshot() : null,
     agents: store.listAgents().length,
-  }),
-);
+  });
+});
 
 app.get("/api/registry", (c) =>
   c.json({
@@ -150,7 +236,11 @@ app.put("/api/agents/:id", async (c) => {
   const existing = store.getAgent(id);
   if (!existing) return c.json({ error: "not found" }, 404);
   if (existing.system) return c.json({ error: "System agents are defined in code (src/builder/systemAgents.ts)" }, 403);
-  const { spec, note } = await c.req.json<{ spec: AgentSpec; note?: string }>();
+  const { spec, note, baseVersion } = await c.req.json<{ spec: AgentSpec; note?: string; baseVersion?: number }>();
+  // A save that started from an older version does not replace a newer one (docs/WORKFLOW_EDITOR.md).
+  const latest = store.latestVersion(id)!;
+  if (baseVersion !== undefined && baseVersion < latest)
+    return c.json({ error: `A newer version (v${latest}) came after v${baseVersion}`, conflict: true, latestVersion: latest }, 409);
   const r = validateSpec({ ...spec, id }, registry, { getAgent });
   if (!r.valid) return c.json({ error: "Spec has errors", diagnostics: r.diagnostics }, 400);
   const saved = await store.saveVersion({ ...r.spec!, id }, { note: note ?? "edited in Anvil UI" });
@@ -373,9 +463,13 @@ app.get("/api/runs", (c) => {
         .filter((r) => r.parentRunId === q.parent)
         .sort((a, b) => a.startedAt - b.startedAt),
     );
+  // origin=editor: only the test runs of the workflow editor. origin=!editor: without them.
+  const byOrigin = (r: { origin?: string }) => !q.origin || (q.origin.startsWith("!") ? r.origin !== q.origin.slice(1) : r.origin === q.origin);
   return c.json(
     store
-      .listRuns({ agentId: q.agentId, kind: q.kind, limit: q.limit ? Number(q.limit) : 100 })
+      .listRuns({ agentId: q.agentId, kind: q.kind, limit: q.origin ? Number.MAX_SAFE_INTEGER : q.limit ? Number(q.limit) : 100 })
+      .filter(byOrigin)
+      .slice(0, q.limit ? Number(q.limit) : 100)
       .map((r) => (runs.isActive(r.id) ? { ...r, status: runs.activeRecord(r.id)!.status } : r)),
   );
 });
@@ -540,24 +634,41 @@ app.delete("/api/mcp/servers/:name", async (c) => {
   }
 });
 
-// Expose: Anvil itself as an MCP server (Streamable HTTP, stateless).
-const mcpBackend = localBackend(anvil);
+// Expose: Anvil itself as an MCP server (Streamable HTTP, stateless). A hosted user gives the session token.
+const mcpToken = process.env.ANVIL_MCP_TOKEN || config0.apiToken;
 app.all("/mcp", async (c) => {
-  const token = process.env.ANVIL_MCP_TOKEN || config.apiToken;
-  if (token && c.req.header("authorization") !== `Bearer ${token}`) return c.json({ error: "unauthorized" }, 401);
-  const server = createAnvilMcpServer(mcpBackend);
-  const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-  await server.connect(transport);
-  return transport.handleRequest(c.req.raw);
+  let w = localWs;
+  if (accounts) {
+    const account = accounts.verify(
+      tokenOf(
+        "/mcp",
+        (h) => c.req.header(h),
+        () => undefined,
+      ),
+    );
+    if (!account) return c.json({ error: "unauthorized: give your session token as Authorization: Bearer" }, 401);
+    w = await workspaces.user(account.id);
+  } else if (mcpToken && c.req.header("authorization") !== `Bearer ${mcpToken}`) return c.json({ error: "unauthorized" }, 401);
+  return currentWs.run(w!, () =>
+    inWorkspace(w!, async () => {
+      const server = createAnvilMcpServer(localBackend(w!.anvil));
+      const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+      await server.connect(transport);
+      return transport.handleRequest(c.req.raw);
+    }),
+  );
 });
 
+/** The public address of this API, for URLs that a person copies (MCP, webhooks). */
+const publicBase = () => config0.publicUrl || `http://127.0.0.1:${config0.port}`;
+
 app.get("/api/mcp/expose", async (c) => {
-  const url = `http://127.0.0.1:${config.port}/mcp`;
-  const agents = await mcpBackend.listAgents();
+  const url = `${publicBase()}/mcp`;
+  const agents = await localBackend(ws().anvil).listAgents();
   const stdio = path.resolve("src/mcp-stdio.ts");
   return c.json({
     url,
-    tokenRequired: !!process.env.ANVIL_MCP_TOKEN,
+    tokenRequired: !!accounts || !!mcpToken,
     tools: ["anvil_build", "anvil_refine", "anvil_list_agents", "anvil_run_agent", ...agents.map((a) => toolNameFor(a.id))],
     snippets: {
       claudeCode: `claude mcp add --transport http anvil ${url}`,
@@ -613,7 +724,8 @@ app.post("/api/agents/:id/triggers/:tid/fire", async (c) => {
 
 app.get("/api/agents/:id/triggers/:tid/webhook", async (c) => {
   const secret = await triggers.webhookToken(c.req.param("id"), c.req.param("tid"), c.req.query("rotate") === "true");
-  const url = `http://127.0.0.1:${config.port}/api/hooks/${c.req.param("id")}/${c.req.param("tid")}`;
+  // A hosted webhook URL names the workspace: agent ids are unique only in one workspace.
+  const url = `${publicBase()}/api/hooks/${accounts ? `u/${ws().id}/` : ""}${c.req.param("id")}/${c.req.param("tid")}`;
   const body = '{"hello":"world"}';
   const ts = String(Math.floor(Date.now() / 1000));
   const signed = `curl -s -X POST '${url}' -H 'Content-Type: application/json' -H '${TIMESTAMP_HEADER}: ${ts}' -H '${SIGNATURE_HEADER}: ${signWebhook(secret, ts, body)}' -H 'Idempotency-Key: delivery-1' -d '${body}'`;
@@ -630,7 +742,153 @@ app.get("/api/agents/:id/triggers/:tid/webhook", async (c) => {
 });
 
 // Public webhook entry point (docs/TRIGGERS.md).
-mountWebhooks(app, triggers, config.webhook.maxBodyBytes);
+mountWebhooks(
+  app,
+  async (userId) => (accounts ? (userId && accounts.get(userId) ? workspaces.user(userId) : undefined) : userId ? undefined : localWs),
+  (w, fn) => currentWs.run(w, () => inWorkspace(w, fn)),
+  config0.webhook.maxBodyBytes,
+);
+
+/* ------------------------- accounts and settings (docs/HOSTING.md) ------------------------- */
+
+/** Public facts that the web app needs before a sign-in. */
+app.get("/api/app", (c) => c.json({ hosted: !!accounts, decisionModel: config0.decisionModel }));
+
+const clientOf = (c: { req: { header: (h: string) => string | undefined } }) =>
+  c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("x-real-ip") ?? "direct";
+const accountError = (c: { json: (b: unknown, s: number) => Response }, e: unknown) => c.json({ error: (e as Error).message }, ((e as { status?: number }).status ?? 400) as 400);
+
+app.post("/api/auth/register", async (c) => {
+  if (!accounts) return c.json({ error: "This Anvil has no accounts: it is a local, single-user Anvil" }, 404);
+  const body = await c.req.json<{ username?: string; password?: string }>().catch(() => ({}) as { username?: string; password?: string });
+  try {
+    accounts.limit("register", clientOf(c), 5);
+    const r = accounts.register(body.username ?? "", body.password ?? "");
+    void workspaces.user(r.account.id);
+    return c.json(r, 201);
+  } catch (e) {
+    return accountError(c, e);
+  }
+});
+
+app.post("/api/auth/login", async (c) => {
+  if (!accounts) return c.json({ error: "This Anvil has no accounts: it is a local, single-user Anvil" }, 404);
+  const body = await c.req.json<{ username?: string; password?: string }>().catch(() => ({}) as { username?: string; password?: string });
+  try {
+    accounts.limit("login", clientOf(c), 10);
+    return c.json(accounts.login(body.username ?? "", body.password ?? ""));
+  } catch (e) {
+    return accountError(c, e);
+  }
+});
+
+/** The account and the settings of the current workspace: the settings page and the sidebar read it. */
+const meView = () => {
+  const w = ws();
+  const cfg = w.anvil.config;
+  return {
+    hosted: !!accounts,
+    account: accounts ? (accounts.get(w.id) ?? null) : null,
+    models: { llm: cfg.llmModel, decision: cfg.decisionModel },
+    key: { configured: !!cfg.apiKey, hint: settingsStore.keyHint(w.id), fromEnv: !accounts && !settingsStore.apiKey(w.id) && !!cfg.apiKey },
+    settings: { values: settingValues(cfg), overrides: settingsStore.settings(w.id).values, defaults: settingValues(config0) },
+    fields: SETTING_FIELDS,
+    groups: SETTING_GROUPS,
+  };
+};
+
+app.get("/api/me", (c) => c.json(meView()));
+
+app.put("/api/me/settings", async (c) => {
+  const { values } = await c.req.json<{ values?: Record<string, unknown> }>().catch(() => ({}) as { values?: Record<string, unknown> });
+  try {
+    settingsStore.setValues(ws().id, values ?? {});
+    await workspaces.refresh(ws().id);
+    return c.json(meView());
+  } catch (e) {
+    return accountError(c, e);
+  }
+});
+
+app.put("/api/me/key", async (c) => {
+  const { apiKey } = await c.req.json<{ apiKey?: string }>().catch(() => ({}) as { apiKey?: string });
+  try {
+    settingsStore.setApiKey(ws().id, apiKey ?? "");
+    await workspaces.refresh(ws().id);
+    return c.json(meView());
+  } catch (e) {
+    return accountError(c, e);
+  }
+});
+
+app.put("/api/me/username", async (c) => {
+  if (!accounts) return c.json({ error: "The local Anvil has no accounts" }, 404);
+  const { username } = await c.req.json<{ username?: string }>().catch(() => ({}) as { username?: string });
+  try {
+    accounts.rename(ws().id, username ?? "");
+    return c.json(meView());
+  } catch (e) {
+    return accountError(c, e);
+  }
+});
+
+app.put("/api/me/password", async (c) => {
+  if (!accounts) return c.json({ error: "The local Anvil has no accounts" }, 404);
+  const body = await c.req.json<{ current?: string; next?: string }>().catch(() => ({}) as { current?: string; next?: string });
+  try {
+    return c.json({ token: accounts.changePassword(ws().id, body.current ?? "", body.next ?? "") });
+  } catch (e) {
+    return accountError(c, e);
+  }
+});
+
+app.post("/api/auth/logout-all", (c) => {
+  if (accounts) accounts.logoutAll(ws().id);
+  return c.json({ ok: true });
+});
+
+/* --------------------------- the Agent Bazaar (docs/BAZAAR.md) --------------------------- */
+
+const bazaarError = (c: { json: (b: unknown, s: number) => Response }, e: unknown) => c.json({ error: (e as Error).message }, ((e as { status?: number }).status ?? 400) as 400);
+
+app.get("/api/bazaar", (c) => {
+  const q = c.req.query();
+  return c.json(bazaar.list({ q: q.q, sort: q.sort === "popular" ? "popular" : "new", owner: q.mine === "true" ? ws().id : undefined }));
+});
+
+app.get("/api/bazaar/:id", (c) => {
+  const l = bazaar.get(c.req.param("id"));
+  return l ? c.json({ ...l, mine: l.ownerId === ws().id }) : c.json({ error: "No such listing" }, 404);
+});
+
+app.post("/api/bazaar", async (c) => {
+  const body = await c.req.json<{ agentId: string; version?: number; title?: string; description?: string; tags?: string[] }>();
+  try {
+    return c.json(bazaar.share(ws().id, ws().anvil, body), 201);
+  } catch (e) {
+    return bazaarError(c, e);
+  }
+});
+
+app.delete("/api/bazaar/:id", (c) => {
+  try {
+    bazaar.unshare(c.req.param("id"), ws().id);
+    return c.json({ ok: true });
+  } catch (e) {
+    return bazaarError(c, e);
+  }
+});
+
+app.post("/api/bazaar/:id/use", async (c) => {
+  try {
+    return c.json(await bazaar.use(c.req.param("id"), ws().id, ws().anvil), 201);
+  } catch (e) {
+    return bazaarError(c, e);
+  }
+});
+
+// The workflow editor (docs/WORKFLOW_EDITOR.md).
+mountWorkflow(app, { store, runs, registry, triggers, dataDir: config0.dataDir, summarize: summarizeAgent });
 
 /* -------------------------------- classes -------------------------------- */
 
@@ -800,24 +1058,23 @@ if (fs.existsSync(path.join(dist, "index.html"))) {
   app.get("*", (c) => c.html(fs.readFileSync(path.join(dist, "index.html"), "utf8")));
 }
 
-serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) => {
-  console.log(`\n  ⚒  Anvil API on http://${config.host}:${info.port}`);
-  if (config.host !== "127.0.0.1" && config.host !== "localhost" && !config.apiToken)
+serve({ fetch: app.fetch, port: config0.port, hostname: config0.host }, (info) => {
+  console.log(`\n  ⚒  Anvil API on http://${config0.host}:${info.port}${accounts ? "  (hosted: accounts and one workspace for each user)" : ""}`);
+  if (!accounts && config0.host !== "127.0.0.1" && config0.host !== "localhost" && !config0.apiToken)
     console.log("     WARNING: the server listens on all addresses without ANVIL_API_TOKEN. Anyone on the network can use it.");
-  console.log(`     LLM: ${config.llmModel}   decisions: ${config.decisionModel}   key: ${config.apiKey ? "configured" : "MISSING (set OPENROUTER_API_KEY in .env)"}\n`);
-  // The sandbox gets its containers ready, so the first program does not wait.
-  void anvil.sandbox.status().then((st) => {
-    console.log(`     Python sandbox: ${st.available ? `ready (network: ${config.sandbox.network})` : `not available: ${st.reason}`}`);
-    if (st.available) void anvil.sandbox.warm();
-  });
+  if (localWs) {
+    const cfg = localWs.anvil.config;
+    console.log(`     LLM: ${cfg.llmModel}   decisions: ${cfg.decisionModel}   key: ${cfg.apiKey ? "configured" : "MISSING (set OPENROUTER_API_KEY in .env, or in Settings)"}\n`);
+    // The sandbox gets its containers ready, so the first program does not wait.
+    void localWs.anvil.sandbox.status().then((st) => {
+      console.log(`     Python sandbox: ${st.available ? `ready (network: ${cfg.sandbox.network})` : `not available: ${st.reason}`}`);
+      if (st.available) void localWs.anvil.sandbox.warm();
+    });
+  }
 });
 
 const shutdown = async () => {
-  triggers.stop();
-  await mcp.closeAll();
-  await anvil.browser.close();
-  await anvil.sandbox.dispose().catch(() => undefined);
-  await store.flush();
+  await workspaces.closeAll();
   process.exit(0);
 };
 process.on("SIGINT", shutdown);

@@ -1,8 +1,9 @@
 import type { AgentSpec, AgentVersion, Diagnostic, JSONSchema, StoredAgent } from "@core/types";
-import { Activity, Check, Download, FlaskConical, MessageSquare, Play, Save, Sparkles, Trash2, Wand2, X } from "lucide-react";
+import { Activity, Check, Download, FlaskConical, MessageSquare, Play, Save, Sparkles, Store, Trash2, Wand2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { GraphView } from "../components/GraphView";
+import { ShareDialog } from "../components/ShareDialog";
 import { TriggersPanel } from "../components/Triggers";
 import { NodeInspector, RunViewer } from "../components/RunViewer";
 import { SchemaForm } from "../components/SchemaForm";
@@ -621,6 +622,7 @@ export function AgentPage() {
   const [err, setErr] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [viewVersion, setViewVersion] = useState<number | null>(null);
+  const [sharing, setSharing] = useState(false);
   const [agentHealth, setAgentHealth] = useState<AgentHealth | null>(null);
   const [hasHealth, setHasHealth] = useState(false);
   const tab = (params.get("tab") as Tab) ?? "graph";
@@ -703,9 +705,21 @@ export function AgentPage() {
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap gap-2 lg:ml-auto">
-            <a className="btn" href={`/api/agents/${agent.id}/export?version=${version.version}`}>
+            <button
+              className="btn"
+              onClick={async () => {
+                // A download through the API client: a hosted API needs the session token in a header.
+                const spec = await api.exportAgent(agent.id, version.version);
+                const url = URL.createObjectURL(new Blob([JSON.stringify(spec, null, 2)], { type: "application/json" }));
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = `${spec.id}.v${spec.version}.anvil.json`;
+                link.click();
+                URL.revokeObjectURL(url);
+              }}
+            >
               <Download size={14} /> Export
-            </a>
+            </button>
             {!agent.system && (
               <button
                 className="btn btn-danger"
@@ -717,6 +731,17 @@ export function AgentPage() {
               >
                 <Trash2 size={14} />
               </button>
+            )}
+            {!agent.system && (
+              <button className="btn" title="Share this version in the Agent Bazaar" onClick={() => setSharing(true)}>
+                <Store size={14} /> Share
+              </button>
+            )}
+            {sharing && <ShareDialog agent={agent} version={version.version} onClose={() => setSharing(false)} />}
+            {!agent.system && (
+              <Link className="btn" to={`/agents/${agent.id}/workflow`} title="Open the agent in the workflow editor">
+                Edit workflow
+              </Link>
             )}
             {!agent.system && (
               <button className="btn btn-primary" onClick={() => setTab("run")}>
@@ -747,6 +772,13 @@ export function AgentPage() {
         {tab === "graph" && (
           <div className={`grid h-full grid-cols-1 ${selected ? "grid-rows-[minmax(320px,1fr)_auto] lg:grid-cols-[minmax(0,1fr)_400px] lg:grid-rows-1" : "grid-rows-1"}`}>
             <div className="relative min-h-0">
+              <div className="absolute top-3 left-3 z-10">
+                {!agent.system && (
+                  <Link className="btn" to={`/agents/${agent.id}/workflow`}>
+                    Edit workflow
+                  </Link>
+                )}
+              </div>
               <GraphView spec={spec} selected={selected} onSelect={setSelected} compact={agent.system} />
             </div>
             {selected && (

@@ -201,12 +201,29 @@ export function EventRow({ e, showNode = true }: { e: RunEvent; showNode?: boole
   }
 }
 
-export function EventFeed({ events, showNode = true, filter }: { events: RunEvent[]; showNode?: boolean; filter?: (e: RunEvent) => boolean }) {
+export function EventFeed({
+  events,
+  showNode = true,
+  filter,
+  onNode,
+}: {
+  events: RunEvent[];
+  showNode?: boolean;
+  filter?: (e: RunEvent) => boolean;
+  onNode?: (id: string) => void;
+}) {
   const list = filter ? events.filter(filter) : events;
   return (
     <div className="divide-y divide-transparent">
       {list.map((e, i) => (
-        <EventRow key={i} e={e} showNode={showNode} />
+        <div
+          key={i}
+          onClick={() => {
+            if ("nodeId" in e && e.nodeId) onNode?.(e.nodeId);
+          }}
+        >
+          <EventRow e={e} showNode={showNode} />
+        </div>
       ))}
     </div>
   );

@@ -140,7 +140,8 @@ export class OpenRouterClient {
   }
 
   private async post(path: string, body: unknown, signal?: AbortSignal): Promise<any> {
-    if (!this.cfg.apiKey) throw new ApiError("OPENROUTER_API_KEY is not set", 401, false);
+    if (!this.cfg.apiKey)
+      throw new ApiError(this.cfg.hosted ? "Add your OpenRouter key in Settings: runs use your own key." : "OPENROUTER_API_KEY is not set", 401, false);
     const maxAttempts = 4;
     const timeoutMs = this.timeoutFor((body as { max_tokens?: number }).max_tokens);
     let timeouts = 0;

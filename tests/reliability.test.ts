@@ -9,6 +9,7 @@ import type { AgentSpec, RunEvent } from "../src/core/types.js";
 import { createAnvil } from "../src/runtime/anvil.js";
 import { signWebhook, TriggerManager } from "../src/runtime/triggers.js";
 import { apiTokenOk } from "../src/server/auth.js";
+import type { Workspace } from "../src/runtime/workspaces.js";
 import { mountWebhooks } from "../src/server/webhooks.js";
 import { anvilWith, FakeClient } from "./helpers.js";
 
@@ -209,7 +210,9 @@ describe("webhook HTTP entry (docs/TRIGGERS.md)", () => {
     const triggers = new TriggerManager({ store: anvil.store, runs: anvil.runs });
     await triggers.load();
     const hono = new Hono();
-    mountWebhooks(hono, triggers, maxBodyBytes);
+    // The local workspace (no user in the URL) with this trigger manager.
+    const ws = { anvil: { ...anvil, triggers } } as unknown as Workspace;
+    mountWebhooks(hono, async (user) => (user ? undefined : ws), (_w, fn) => fn(), maxBodyBytes);
     return { hono, triggers, secret: await triggers.webhookToken("wh", "in") };
   }
 

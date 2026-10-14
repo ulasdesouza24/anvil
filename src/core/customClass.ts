@@ -1,3 +1,4 @@
+import { currentEnv } from "./scope.js";
 import { Ajv } from "ajv";
 import { z } from "zod";
 import { runCheck } from "../builder/evaluate.js";
@@ -336,7 +337,7 @@ export async function executeImpl(def: CustomClassDef, config: Record<string, un
       schema: def.outputSchema as JSONSchema,
     });
   }
-  const { secrets, missing } = secretsFor(def, rt.env ?? process.env);
+  const { secrets, missing } = secretsFor(def, rt.env ?? currentEnv());
   if (missing.length) throw new Error(`Missing secret${missing.length > 1 ? "s" : ""} ${missing.join(", ")} — add ${missing.length > 1 ? "them" : "it"} to .env and restart`);
   const scope = { config, secrets };
   const req = resolveDeep(impl.request, scope) as { method: string; url: string; headers?: Record<string, string>; query?: Record<string, unknown>; body?: unknown };
@@ -412,7 +413,9 @@ export function buildCustomClass(def: CustomClassDef): NodeClass<Record<string, 
           runId: sessionOf(ctx.input) ?? ctx.runId,
         });
       // A class that changes the outside world runs one time for each run (docs/EFFECTS.md).
-      const output = def.sideEffects ? await runEffect(ctx, def.type, ctx.config, call) : await call();
+      // A mock tool, sandboxed code, and a prompt skill stay inside Anvil: a dry run of the editor does them.
+      const local = def.impl.kind === "code" || def.impl.kind === "llm" || (def.impl.kind === "tool" && (def.impl.adapter || ctx.brain.config.tools.adapter) === "mock");
+      const output = def.sideEffects ? await runEffect(ctx, def.type, ctx.config, call, { local }) : await call();
       const errs = schemaErrors(def.outputSchema as JSONSchema, output);
       if (errs.length) ctx.log(`output does not fully match the class outputSchema: ${errs.slice(0, 3).join("; ")}`, undefined, "warn");
       return { output };
@@ -432,7 +435,7 @@ export interface ClassTestOutcome {
 export async function testClassDef(def: CustomClassDef, brain: Brain, rt: ClassRuntimeEnv = {}): Promise<ClassTestOutcome> {
   if (def.impl.kind === "http" && def.sideEffects) return { status: "untested", report: [], skippedReason: "side-effecting http classes are not executed automatically" };
   if (def.impl.kind === "mcp" && (def.sideEffects || !rt.mcp)) return { status: "untested", report: [], skippedReason: "MCP tools are only tested when read-only" };
-  const { missing } = secretsFor(def, rt.env ?? process.env);
+  const { missing } = secretsFor(def, rt.env ?? currentEnv());
   if (missing.length) return { status: "untested", report: [], skippedReason: `missing secrets: ${missing.join(", ")}` };
   if (!def.tests.length) return { status: "untested", report: [], skippedReason: "no tests" };
   const validate = cfgAjv.compile(def.configSchema as JSONSchema);

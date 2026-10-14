@@ -385,6 +385,26 @@ export function AnvilPage() {
           ))}
         </div>
 
+        <div className="mt-6 text-center text-[12.5px] text-[var(--color-muted)]">
+          Or{" "}
+          <button
+            className="text-[var(--color-ember)] hover:underline"
+            onClick={async () => {
+              const name = prompt("Workflow name", "New workflow");
+              if (!name?.trim()) return;
+              try {
+                const a = await api.createBlank(name.trim());
+                nav(`/agents/${a.id}/workflow`);
+              } catch (e) {
+                alert((e as Error).message);
+              }
+            }}
+          >
+            start from a blank workflow
+          </button>{" "}
+          and build it by hand on the canvas.
+        </div>
+
         {recent.length > 0 && (
           <div className="mt-12">
             <div className="label mb-3">Recent builds</div>

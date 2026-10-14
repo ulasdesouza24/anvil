@@ -37,6 +37,12 @@ export const NodeInstanceZ = z.object({
   retry: RetryZ.partial().optional(),
   timeoutMs: z.number().int().positive().max(900_000).optional(),
   position: z.object({ x: z.number(), y: z.number() }).optional(),
+  /** The step does not run (docs/WORKFLOW_EDITOR.md). Only its "out" edges stay active, and its output is empty. */
+  disabled: z.boolean().optional(),
+  /** A note of a person for this step. The engine and the builder do not read it. */
+  notes: z.string().optional(),
+  /** The builder (edit, evolve) does not change or remove this step. A person changes it in the workflow editor. */
+  locked: z.boolean().optional(),
 });
 export type NodeInstance = z.infer<typeof NodeInstanceZ>;
 
@@ -183,6 +189,20 @@ export const AgentSpecZ = z.object({
   meta: z.record(z.string(), z.unknown()).default({}),
 });
 export type AgentSpec = z.infer<typeof AgentSpecZ>;
+
+/** The layout data of the workflow editor in spec.meta.canvas. The engine does not read it. */
+export interface StickyNote {
+  id: string;
+  text: string;
+  position: { x: number; y: number };
+  size?: { width: number; height: number };
+  color?: string;
+}
+
+export interface CanvasMeta {
+  notes?: StickyNote[];
+  viewport?: { x: number; y: number; zoom: number };
+}
 
 /* ------------------------------------------------------------------ */
 /* Diagnostics                                                         */
@@ -334,6 +354,17 @@ export interface RunRecord {
   agentName: string;
   version: number;
   kind: "run" | "build" | "refine" | "eval" | "trigger";
+  /** Set when a person started the run from the workflow editor (docs/WORKFLOW_EDITOR.md). */
+  origin?: "editor";
+  /** The run did no action with a side effect: each action gave a preview (docs/WORKFLOW_EDITOR.md). */
+  dryRun?: boolean;
+  /** For a partial run of the editor: the step where the run stops. */
+  targetNodeId?: string;
+  /**
+   * Only for a run of the workflow editor: the full output and the ports of each finished step (secrets redacted).
+   * The editor shows this data, and "execute step" uses it again for the steps before the step.
+   */
+  stepData?: Record<string, { output: unknown; ports: string[] }>;
   /** For kind=trigger: which trigger fired and why. */
   trigger?: { agentId: string; triggerId: string; type: Trigger["type"]; chainDepth?: number; event?: string };
   parentRunId?: string;
