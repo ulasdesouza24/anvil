@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="560" viewBox="0 0 1280 560" role="img" aria-labelledby="t d">
+<title id="t">How Anvil builds an agent</title>
+<desc id="d">The 13 stages of the anvil-builder agent, from the request to the published agent.</desc>
+<defs>
+<pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" fill="none" stroke="#1b1e25"/></pattern>
+<marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#3a3f4d"/></marker>
+<style>
+.sans{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+.mono{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.lit{opacity:0;animation:lit 12s linear infinite}
+@keyframes lit{0%{opacity:1}8%{opacity:0}100%{opacity:0}}
+.token{offset-path:path("M 136.0 196 L 976.0 196 L 976.0 290 L 136.0 290 L 136.0 418 L 1144.0 418");offset-rotate:0deg;animation:move 12s linear infinite}
+@keyframes move{0%{offset-distance:0%;opacity:1}87.5%{offset-distance:100%;opacity:1}90.5%{offset-distance:100%;opacity:0}100%{offset-distance:100%;opacity:0}}
+.flow{stroke-dasharray:5 7;animation:dash 1.2s linear infinite}
+@keyframes dash{to{stroke-dashoffset:-24}}
+.spin{transform-box:fill-box;transform-origin:center;animation:spin 2.4s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.lit,.token,.flow,.spin{animation:none}}
+</style></defs>
+<rect width="1280" height="560" rx="20" fill="#0b0c0e"/>
+<rect width="1280" height="560" rx="20" fill="url(#grid)" opacity=".6"/>
+<rect x=".5" y=".5" width="1279" height="559" rx="20" fill="none" stroke="#232731"/>
+<text x="61" y="52" class="sans" font-size="22" font-weight="800" fill="#e8eaee">How Anvil builds an agent</text>
+<text x="61" y="76" class="sans" font-size="13" fill="#9097a4">Each stage is a node of the anvil-builder agent. The builder is an Anvil agent too.</text>
+<g class="mono" font-size="11"><rect x="1126" y="40" width="85" height="22" rx="11" fill="#111317" stroke="#2e3340"/><circle cx="1138" cy="51" r="3.5" fill="#38bdf8"/><text x="1147" y="55" fill="#c8ccd4">compiler</text></g>
+<g class="mono" font-size="11"><rect x="1047" y="40" width="70" height="22" rx="11" fill="#111317" stroke="#2e3340"/><circle cx="1059" cy="51" r="3.5" fill="#34d399"/><text x="1068" y="55" fill="#c8ccd4">person</text></g>
+<g class="mono" font-size="11"><rect x="962" y="40" width="78" height="22" rx="11" fill="#111317" stroke="#2e3340"/><circle cx="974" cy="51" r="3.5" fill="#fb923c"/><text x="983" y="55" fill="#c8ccd4">S1 + S2</text></g>
+<g class="mono" font-size="11"><rect x="868" y="40" width="85" height="22" rx="11" fill="#111317" stroke="#2e3340"/><circle cx="880" cy="51" r="3.5" fill="#a78bfa"/><text x="889" y="55" fill="#c8ccd4">S2 · LLM</text></g>
+<g class="mono" font-size="11"><rect x="775" y="40" width="85" height="22" rx="11" fill="#111317" stroke="#2e3340"/><circle cx="787" cy="51" r="3.5" fill="#fbbf24"/><text x="796" y="55" fill="#c8ccd4">S1 · Jev</text></g>
+<g fill="none" stroke="#3a3f4d" stroke-width="1.6">
+<path d="M 213 196 L 226 196" marker-end="url(#arr)"/>
+<path d="M 381 196 L 394 196" marker-end="url(#arr)"/>
+<path d="M 549 196 L 562 196" marker-end="url(#arr)"/>
+<path d="M 717 196 L 730 196" marker-end="url(#arr)"/>
+<path d="M 885 196 L 898 196" marker-end="url(#arr)"/>
+<path d="M 213 418 L 226 418" marker-end="url(#arr)"/>
+<path d="M 381 418 L 394 418" marker-end="url(#arr)"/>
+<path d="M 549 418 L 562 418" marker-end="url(#arr)"/>
+<path d="M 717 418 L 730 418" marker-end="url(#arr)"/>
+<path d="M 885 418 L 898 418" marker-end="url(#arr)"/>
+<path d="M 1053 418 L 1066 418" marker-end="url(#arr)"/>
+<path d="M 976.0 214 L 976.0 290 L 136.0 290 L 136.0 319" marker-end="url(#arr)"/>
+</g>
+<path class="flow" d="M 976.0 214 L 976.0 290 L 136.0 290 L 136.0 319" fill="none" stroke="#f97316" stroke-opacity=".5" stroke-width="1.6"/>
+<g><rect x="61" y="100" width="150" height="112" rx="12" fill="#111317" stroke="#2e3340"/>
+<rect class="lit" style="animation-delay:0.00s" x="61" y="100" width="150" height="112" rx="12" fill="#f97316" fill-opacity=".08" stroke="#f97316" stroke-width="1.6"/>
+<text x="73" y="122" class="mono" font-size="11" fill="#5d6472">01</text><text x="95" y="123" class="sans" font-size="14.5" font-weight="700" fill="#e8eaee">Request</text>
+<text x="73" y="145" class="sans" font-size="11" fill="#9097a4">plain text, files,</text>
+<text x="73" y="160" class="sans" font-size="11" fill="#9097a4">given tools and</text>
+<text x="73" y="175" class="sans" font-size="11" fill="#9097a4">given tests</text>
+<circle cx="197" cy="117" r="4" fill="#9097a4"/></g>
+<g><rect x="229" y="100" width="150" height="112" rx="12" fill="#111317" stroke="#2e3340"/>
+<rect class="lit" style="animation-delay:0.61s" x="229" y="100" width="150" height="112" rx="12" fill="#f97316" fill-opacity=".08" stroke="#f97316" stroke-width="1.6"/>
+<text x="241" y="122" class="mono" font-size="11" fill="#5d6472">02</text><text x="263" y="123" class="sans" font-size="14.5" font-weight="700" fill="#e8eaee">Tools</text>
+<text x="241" y="145" class="sans" font-size="11" fill="#9097a4">OpenAPI or functions</text>
+<text x="241" y="160" class="sans" font-size="11" fill="#9097a4">become classes.</text>
+<text x="241" y="175" class="sans" font-size="11" fill="#9097a4">The build is closed.</text>
+<circle cx="365" cy="117" r="4" fill="#9097a4"/></g>
+<g><rect x="397" y="100" width="150" height="112" rx="12" fill="#111317" stroke="#2e3340"/>
+<rect class="lit" style="animation-delay:1.21s" x="397" y="100" width="150" height="112" rx="12" fill="#f97316" fill-opacity=".08" stroke="#f97316" stroke-width="1.6"/>
+<text x="409" y="122" class="mono" font-size="11" fill="#5d6472">03</text><text x="431" y="123" class="sans" font-size="14.5" font-weight="700" fill="#e8eaee">Triage</text>
+<text x="409" y="145" class="sans" font-size="11" fill="#9097a4">8 questions in one</text>
+<text x="409" y="160" class="sans" font-size="11" fill="#9097a4">0.3 s Jev call.</text>
+<text x="409" y="175" class="sans" font-size="11" fill="#9097a4">A cost estimate.</text>
+<circle cx="533" cy="117" r="4" fill="#fbbf24"/></g>
+<g><rect x="565" y="100" width="150" height="112" rx="12" fill="#111317" stroke="#2e3340"/>
+<rect class="lit" style="animation-delay:1.82s" x="565" y="100" width="150" height="112" rx="12" fill="#f97316" fill-opacity=".08" stroke="#f97316" stroke-width="1.6"/>
+<text x="577" y="122" class="mono" font-size="11" fill="#5d6472">04</text><text x="599" y="123" class="sans" font-size="14.5" font-weight="700" fill="#e8eaee">Cost gate</text>
+<text x="577" y="145" class="sans" font-size="11" fill="#9097a4">Over the limit: stop.</text>
+<text x="577" y="160" class="sans" font-size="11" fill="#9097a4">Above the confirm</text>
+<text x="577" y="175" class="sans" font-size="11" fill="#9097a4">level: ask a person.</text>
+<circle cx="701" cy="117" r="4" fill="#34d399"/></g>
+<g><rect x="733" y="100" width="150" height="112" rx="12" fill="#111317" stroke="#2e3340"/>
+<rect class="lit" style="animation-delay:2.42s" x="733" y="100" width="150" height="112" rx="12" fill="#f97316" fill-opacity=".08" stroke="#f97316" stroke-width="1.6"/>
+<text x="745" y="122" class="mono" font-size="11" fill="#5d6472">05</text><text x="767" y="123" class="sans" font-size="14.5" font-weight="700" fill="#e8eaee">Analyze</text>
+<text x="745" y="145" class="sans" font-size="11" fill="#9097a4">Task spec: inputs,</text>
+<text x="745" y="160" class="sans" font-size="11" fill="#9097a4">outputs, steps,</text>
+<text x="745" y="175" class="sans" font-size="11" fill="#9097a4">rules, criteria.</text>
+<circle cx="869" cy="117" r="4" fill="#a78bfa"/></g>
+<g><rect x="901" y="100" width="150" height="112" rx="12" fill="#111317" stroke="#2e3340"/>
+<rect class="lit" style="animation-delay:3.03s" x="901" y="100" width="150" height="112" rx="12" fill="#f97316" fill-opacity=".08" stroke="#f97316" stroke-width="1.6"/>
+<text x="913" y="122" class="mono" font-size="11" fill="#5d6472">06</text><text x="935" y="123" class="sans" font-size="14.5" font-weight="700" fill="#e8eaee">Library</text>
+<text x="913" y="145" class="sans" font-size="11" fill="#9097a4">Task class, tested</text>
+<text x="913" y="160" class="sans" font-size="11" fill="#9097a4">examples, and the</text>
+<text x="913" y="175" class="sans" font-size="11" fill="#9097a4">lessons of the domain.</text>
+<circle cx="1037" cy="117" r="4" fill="#fbbf24"/></g>
+<g><rect x="61" y="322" width="150" height="112" rx="12" fill="#111317" stroke="#2e3340"/>
+<rect class="lit" style="animation-delay:6.86s" x="61" y="322" width="150" height="112" rx="12" fill="#f97316" fill-opacity=".08" stroke="#f97316" stroke-width="1.6"/>
+<text x="73" y="344" class="mono" font-size="11" fill="#5d6472">07</text><text x="95" y="345" class="sans" font-size="14.5" font-weight="700" fill="#e8eaee">Sources</text>
+<text x="73" y="367" class="sans" font-size="11" fill="#9097a4">Probe real sources.</text>
+<text x="73" y="382" class="sans" font-size="11" fill="#9097a4">Score the samples.</text>
+<text x="73" y="397" class="sans" font-size="11" fill="#9097a4">Make source classes.</text>
+<circle cx="197" cy="339" r="4" fill="#fb923c"/></g>
+<g><rect x="229" y="322" width="150" height="112" rx="12" fill="#111317" stroke="#2e3340"/>
+<rect class="lit" style="animation-delay:7.47s" x="229" y="322" width="150" height="112" rx="12" fill="#f97316" fill-opacity=".08" stroke="#f97316" stroke-width="1.6"/>
+<text x="241" y="344" class="mono" font-size="11" fill="#5d6472">08</text><text x="263" y="345" class="sans" font-size="14.5" font-weight="700" fill="#e8eaee">Architect</text>
+<text x="241" y="367" class="sans" font-size="11" fill="#9097a4">Pick node classes.</text>
+<text x="241" y="382" class="sans" font-size="11" fill="#9097a4">Jev checks the plan</text>
+<text x="241" y="397" class="sans" font-size="11" fill="#9097a4">and sets model tiers.</text>
+<circle cx="365" cy="339" r="4" fill="#fb923c"/></g>
+<g><rect x="397" y="322" width="150" height="112" rx="12" fill="#111317" stroke="#2e3340"/>
+<rect class="lit" style="animation-delay:8.08s" x="397" y="322" width="150" height="112" rx="12" fill="#f97316" fill-opacity=".08" stroke="#f97316" stroke-width="1.6"/>
+<text x="409" y="344" class="mono" font-size="11" fill="#5d6472">09</text><text x="431" y="345" class="sans" font-size="14.5" font-weight="700" fill="#e8eaee">Classgen</text>
+<text x="409" y="367" class="sans" font-size="11" fill="#9097a4">Write a missing class,</text>
+<text x="409" y="382" class="sans" font-size="11" fill="#9097a4">run its tests,</text>
+<text x="409" y="397" class="sans" font-size="11" fill="#9097a4">repair it.</text>
+<circle cx="533" cy="339" r="4" fill="#a78bfa"/></g>
+<g><rect x="565" y="322" width="150" height="112" rx="12" fill="#111317" stroke="#2e3340"/>
+<rect class="lit" style="animation-delay:8.68s" x="565" y="322" width="150" height="112" rx="12" fill="#f97316" fill-opacity=".08" stroke="#f97316" stroke-width="1.6"/>
+<text x="577" y="344" class="mono" font-size="11" fill="#5d6472">10</text><text x="599" y="345" class="sans" font-size="14.5" font-weight="700" fill="#e8eaee">Compose</text>
+<text x="577" y="367" class="sans" font-size="11" fill="#9097a4">Write the JSON spec.</text>
+<text x="577" y="382" class="sans" font-size="11" fill="#9097a4">Compile, auto-fix,</text>
+<text x="577" y="397" class="sans" font-size="11" fill="#9097a4">repair by JSON Patch.</text>
+<circle cx="701" cy="339" r="4" fill="#38bdf8"/></g>
+<g><rect x="733" y="322" width="150" height="112" rx="12" fill="#111317" stroke="#2e3340"/>
+<rect class="lit" style="animation-delay:9.29s" x="733" y="322" width="150" height="112" rx="12" fill="#f97316" fill-opacity=".08" stroke="#f97316" stroke-width="1.6"/>
+<text x="745" y="344" class="mono" font-size="11" fill="#5d6472">11</text><text x="767" y="345" class="sans" font-size="14.5" font-weight="700" fill="#e8eaee">Testgen</text>
+<text x="745" y="367" class="sans" font-size="11" fill="#9097a4">Typical, edge,</text>
+<text x="745" y="382" class="sans" font-size="11" fill="#9097a4">adversarial, and</text>
+<text x="745" y="397" class="sans" font-size="11" fill="#9097a4">rule tests.</text>
+<circle cx="869" cy="339" r="4" fill="#a78bfa"/></g>
+<g><rect x="901" y="322" width="150" height="112" rx="12" fill="#111317" stroke="#2e3340"/>
+<rect class="lit" style="animation-delay:9.89s" x="901" y="322" width="150" height="112" rx="12" fill="#f97316" fill-opacity=".08" stroke="#f97316" stroke-width="1.6"/>
+<text x="913" y="344" class="mono" font-size="11" fill="#5d6472">12</text><text x="935" y="345" class="sans" font-size="14.5" font-weight="700" fill="#e8eaee">Evolve</text>
+<text x="913" y="367" class="sans" font-size="11" fill="#9097a4">Jev grades each test.</text>
+<text x="913" y="382" class="sans" font-size="11" fill="#9097a4">A critic reads traces</text>
+<text x="913" y="397" class="sans" font-size="11" fill="#9097a4">and writes a patch.</text>
+<circle cx="1037" cy="339" r="4" fill="#fb923c"/></g>
+<g><rect x="1069" y="322" width="150" height="112" rx="12" fill="#111317" stroke="#2e3340"/>
+<rect class="lit" style="animation-delay:10.50s" x="1069" y="322" width="150" height="112" rx="12" fill="#f97316" fill-opacity=".08" stroke="#f97316" stroke-width="1.6"/>
+<text x="1081" y="344" class="mono" font-size="11" fill="#5d6472">13</text><text x="1103" y="345" class="sans" font-size="14.5" font-weight="700" fill="#e8eaee">Publish</text>
+<text x="1081" y="367" class="sans" font-size="11" fill="#9097a4">New version, API</text>
+<text x="1081" y="382" class="sans" font-size="11" fill="#9097a4">endpoint, MCP tool,</text>
+<text x="1081" y="397" class="sans" font-size="11" fill="#9097a4">triggers (off).</text>
+<circle cx="1205" cy="339" r="4" fill="#9097a4"/></g>
+<path class="flow" d="M 778.0 214 C 778.0 252, 838.0 252, 838.0 214" fill="none" stroke="#34d399" stroke-width="1.6" marker-end="url(#arr)"/>
+<text x="848.0" y="240" class="sans" font-size="11" fill="#34d399">unclear: ask, analyze again</text>
+<text x="580.0" y="90" class="sans" font-size="11" fill="#f87171">over the limit → stop</text>
+<g transform="translate(918.0 448)"><g class="spin"><path d="M 12 2 A 10 10 0 1 1 3.4 7" fill="none" stroke="#fb923c" stroke-width="2"/><path d="M 0 3 L 4 8 L 8 4" fill="none" stroke="#fb923c" stroke-width="2"/></g><text x="30" y="16" class="sans" font-size="11" fill="#fb923c">until the target</text><text x="30" y="31" class="sans" font-size="11" fill="#fb923c">or a limit</text></g>
+<text x="1073" y="462" class="sans" font-size="11" fill="#9097a4">An evaluation crash</text><text x="1073" y="477" class="sans" font-size="11" fill="#9097a4">still publishes the</text><text x="1073" y="492" class="sans" font-size="11" fill="#9097a4">compiled agent.</text>
+<text x="61" y="532" class="sans" font-size="12" fill="#5d6472">Source: src/builder/systemAgents.ts · 20 nodes · max $3 and 30 min for each build (configurable)</text>
+<circle class="token" r="4.5" fill="#fb923c"/><circle class="token" r="9" fill="#f97316" fill-opacity=".25"/>
+</svg>

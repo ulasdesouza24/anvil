@@ -2,7 +2,7 @@ import { Activity, Boxes, Cable, Gauge, Hammer, History, Library, LogOut, Settin
 import { Link, NavLink, Route, Routes } from "react-router-dom";
 import { TokenDialog } from "./components/TokenDialog";
 import { SessionProvider, useSession } from "./lib/session";
-import { AuthPage } from "./pages/AuthPage";
+import { OnboardingPage } from "./pages/OnboardingPage";
 import { BazaarListingPage, BazaarPage } from "./pages/BazaarPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { WorkflowEditorPage } from "./pages/WorkflowEditorPage";
@@ -58,8 +58,8 @@ export function App() {
 function Shell() {
   const { hosted, me, signedOut, down, signOut } = useSession();
   if (hosted === null) return <div className="grid h-full place-items-center text-[13px] text-[var(--color-muted)]">Loading…</div>;
-  // A hosted Anvil shows the sign-in page until the user signs in (docs/HOSTING.md).
-  if (hosted && signedOut) return <AuthPage />;
+  // A hosted Anvil shows onboarding until the user signs in (docs/HOSTING.md).
+  if (hosted && signedOut) return <OnboardingPage />;
 
   return (
     <div className="flex h-full">
